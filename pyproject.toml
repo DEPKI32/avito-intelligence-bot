@@ -12,6 +12,7 @@ dependencies = [
     "pillow>=11,<13",
     "imagehash>=4.3,<5",
     "httpx>=0.27,<1",
+    "tzdata>=2025.2 ; sys_platform == 'win32'",
 ]
 
 [dependency-groups]
