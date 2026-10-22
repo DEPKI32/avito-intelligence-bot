@@ -2,35 +2,47 @@ name: tests
 
 on:
   push:
+    branches: [master, "codex/**"]
   pull_request:
   workflow_dispatch:
 
 jobs:
-  tests:
+  checks:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        include:
+          - os: ubuntu-latest
+            python: "3.11"
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: windows-latest
+            python: "3.12"
     runs-on: ${{ matrix.os }}
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v4
-
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
       - uses: astral-sh/setup-uv@v6
-
-      - name: Install (no git, no captcha extras — as a user would)
-        run: uv sync
-
-      - name: Run the test suite
-        run: uv run --with pytest pytest -q
-
-      - name: Commands start and print Cyrillic
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Check dependencies
+        run: uv pip check --python .venv
+      - name: Ruff
+        run: uv run ruff check intelligence tests_bot
+      - name: Formatting
+        run: uv run ruff format --check intelligence tests_bot
+      - name: Import main modules
+        run: uv run python -c "import avito, avito_client, link_resolver, intelligence.bot, intelligence.service, intelligence.db"
+      - name: Test suite
+        run: uv run pytest -q
+      - name: Legacy CLI starts
         run: |
           uv run python avito.py --help
           uv run python avito.py list
           uv run python avito.py --json list
           echo 0 | uv run python avito.py
-          uv run python avito.py --json list > list.jsonl
-          cat list.jsonl

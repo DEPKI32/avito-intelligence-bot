@@ -1,0 +1,13 @@
+services:
+  bot:
+    build: .
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "uv", "run", "--frozen", "--no-dev", "python", "-c", "import sqlite3; sqlite3.connect('data/intelligence.sqlite3').execute('SELECT 1')"]
+      interval: 1m
+      timeout: 10s
+      retries: 3

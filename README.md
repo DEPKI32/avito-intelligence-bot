@@ -1,5 +1,7 @@
 # Avito Parser
 
+**Avito Intelligence Bot:** инструкция по запуску Telegram-приложения находится в [README_BOT.md](README_BOT.md). Текущее состояние проекта — в [PROJECT_STATUS.md](PROJECT_STATUS.md), устройство — в [ARCHITECTURE.md](ARCHITECTURE.md), история версий — в [CHANGELOG.md](CHANGELOG.md).
+
 E2E-клиент для последовательной обработки Avito firewallPow, QRATOR и
 GeeTest. Все нужные Python-зависимости и локальная библиотека `GeekedTest`
 входят в репозиторий.

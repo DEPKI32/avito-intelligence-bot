@@ -1,0 +1,10 @@
+.git
+.venv
+.env
+data
+output
+__pycache__
+.pytest_cache
+graphify-out
+*.har
+firewall-debug-responses

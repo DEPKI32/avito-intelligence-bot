@@ -6,7 +6,17 @@ dependencies = [
     "curl-cffi>=0.15.0",
     "openpyxl>=3.1.5",
     "questionary>=2.1.1",
+    "aiogram>=3.20,<4",
+    "sqlalchemy>=2.0,<3",
+    "pydantic-settings>=2.0,<3",
+    "pillow>=11,<13",
+    "imagehash>=4.3,<5",
+    "httpx>=0.27,<1",
+    "tzdata>=2025.2 ; sys_platform == 'win32'",
 ]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.12"]
 
 [project.optional-dependencies]
 # Only the old main.py flow solves GeeTest; avito.py never does, so a
@@ -21,3 +31,6 @@ captcha = [
 
 [tool.uv]
 package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
