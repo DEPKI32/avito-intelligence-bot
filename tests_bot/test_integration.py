@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+from datetime import datetime
+from unittest.mock import Mock
 
 import pytest
 from openpyxl import load_workbook
@@ -8,6 +10,7 @@ from PIL import Image
 from sqlalchemy import select
 
 import avito_client
+import item_page
 import link_resolver
 from intelligence.analysis import (
     Market,
@@ -372,3 +375,77 @@ def test_bounded_client_stops_on_source_block(monkeypatch):
     client.stopping.set()
     with pytest.raises(RuntimeError, match="остановлен"):
         client._pause()
+
+
+@pytest.mark.parametrize(
+    ("views", "today", "expected"),
+    [(100, 5, None), (12, 10, "new")],
+)
+def test_new_listing_verification_blocks_likely_reposts(system, views, today, expected):
+    service, source, sessions, _ = system
+    search = service.create_search(1, URL, target_model="iPhone 15")
+    service.set_filter(1, search.id, "min_score", "50")
+    source.pages[(search.id, 1)] = [item(n) for n in range(1, 11)]
+    service.scan_one(search.id)
+    source.pages[(search.id, 1)] = [item(11, price=32000)] + source.pages[
+        (search.id, 1)
+    ]
+    service.scan_one(search.id)
+    note = service.pending()[0][0]
+    source.verify_listing = Mock(
+        return_value=item_page.ItemPage("сегодня", datetime.now(), views, today)
+    )
+    assert service.verify_notification(note.id) == expected
+    assert service.verify_notification(note.id) == expected
+    source.verify_listing.assert_called_once()
+    with sessions() as db:
+        listing = db.get(Listing, "11")
+        assert listing.total_views == views
+        assert listing.today_views == today
+        assert listing.creation_verdict == ("new" if expected else "likely_republished")
+    assert bool(service.pending()) is bool(expected)
+
+
+def test_unavailable_verification_does_not_hide_a_deal(system):
+    service, source, _, _ = system
+    search = service.create_search(1, URL, target_model="iPhone 15")
+    service.set_filter(1, search.id, "min_score", "50")
+    source.pages[(search.id, 1)] = [item(n) for n in range(1, 11)]
+    service.scan_one(search.id)
+    source.pages[(search.id, 1)] = [item(11, price=32000)] + source.pages[
+        (search.id, 1)
+    ]
+    service.scan_one(search.id)
+    note = service.pending()[0][0]
+    source.verify_listing = Mock(side_effect=RuntimeError("temporarily unavailable"))
+    assert service.verify_notification(note.id) == "unverified"
+    assert service.pending()
+    assert service.verify_notification(note.id) == "unverified"
+    source.verify_listing.assert_called_once()
+
+
+def test_browse_sort_search_and_manual_scan(system):
+    service, source, sessions, _ = system
+    search = service.create_search(1, URL)
+    source.pages[(search.id, 1)] = [
+        item(1, title="iPhone 15, 128 ГБ", price=40000),
+        item(2, title="iPhone 15 Pro, 256 ГБ", price=65000),
+        item(3, title="Steam Deck", price=30000),
+    ]
+    service.scan_one(search.id)
+    rows, total = service.search_listings(1, search.id, "iPhone", "cheap")
+    assert total == 2
+    assert [listing.id for _, listing in rows] == ["1", "2"]
+    rows, total = service.search_listings(1, search.id, "Steam")
+    assert total == 1 and rows[0][1].id == "3"
+    with pytest.raises(ValueError):
+        service.search_listings(2, search.id)
+    with pytest.raises(ValueError):
+        service.search_listings(1, search.id, sort="invalid")
+    service.request_scan(1, search.id)
+    assert search.id in service.scan_due()
+    service.set_status(1, search.id, "paused")
+    with pytest.raises(ValueError, match="Сначала запустите"):
+        service.request_scan(1, search.id)
+    with sessions() as db:
+        assert db.get(Search, search.id).status == "paused"

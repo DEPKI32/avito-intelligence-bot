@@ -1,6 +1,6 @@
 [project]
 name = "avito-firewall-flow"
-version = "0.1.0"
+version = "0.2.0"
 requires-python = ">=3.11"
 dependencies = [
     "curl-cffi>=0.15.0",
