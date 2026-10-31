@@ -5,6 +5,7 @@ import html
 import logging
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
@@ -69,8 +70,26 @@ def button(text: str, data: str) -> InlineKeyboardButton:
     return InlineKeyboardButton(text=text, callback_data=data)
 
 
+def current_webapp_url() -> str:
+    configured = getattr(globals().get("SETTINGS"), "webapp_url", "")
+    temporary_hosts = (".trycloudflare.com", ".lhr.life")
+    if not configured or not (urlsplit(configured).hostname or "").endswith(
+        temporary_hosts
+    ):
+        return configured
+    try:
+        active = Path("data/webapp_url.txt").read_text(encoding="utf-8").strip()
+    except OSError:
+        return configured
+    if active.startswith("https://") and (urlsplit(active).hostname or "").endswith(
+        temporary_hosts
+    ):
+        return active
+    return configured
+
+
 def menu():
-    webapp_url = getattr(globals().get("SETTINGS"), "webapp_url", "")
+    webapp_url = current_webapp_url()
     webapp = [[button("✨ Открыть приложение", "app")]] if webapp_url else []
     return InlineKeyboardMarkup(
         inline_keyboard=webapp
@@ -180,14 +199,15 @@ async def start(message: Message, state: FSMContext):
 
 
 async def show_app(target):
-    if not SETTINGS.webapp_url:
+    webapp_url = current_webapp_url()
+    if not webapp_url:
         await display(target, "Mini App пока не подключён к HTTPS-адресу.", menu())
         return
     from .web import issue_ticket
 
     ticket = issue_ticket(target.from_user.id)
-    sep = "&" if "?" in SETTINGS.webapp_url else "?"
-    url = f"{SETTINGS.webapp_url}{sep}ticket={ticket}"
+    sep = "&" if "?" in webapp_url else "?"
+    url = f"{webapp_url}{sep}ticket={ticket}"
     await display(
         target,
         "✨ <b>Avito Intelligence</b>\n\nОткройте личный кабинет: ваши мониторинги, объявления и настройки уже там. Ссылка действует 10 минут.",
@@ -1083,7 +1103,7 @@ async def run(service: Service, settings: Settings):
                 await bot.set_chat_menu_button(
                     menu_button=MenuButtonWebApp(
                         text="Открыть приложение",
-                        web_app=WebAppInfo(url=settings.webapp_url),
+                        web_app=WebAppInfo(url=current_webapp_url()),
                     )
                 )
             else:
