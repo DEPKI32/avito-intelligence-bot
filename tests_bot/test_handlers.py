@@ -40,7 +40,8 @@ async def test_start_and_invalid_link():
 
 
 @pytest.mark.asyncio
-async def test_personal_mini_app_button(monkeypatch):
+async def test_personal_mini_app_button(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         bot,
         "SETTINGS",
@@ -57,6 +58,26 @@ async def test_personal_mini_app_button(monkeypatch):
         button.callback_data == "home"
         for row in keyboard.inline_keyboard
         for button in row
+    )
+
+
+@pytest.mark.asyncio
+async def test_personal_button_uses_rotated_tunnel(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "webapp_url.txt").write_text(
+        "https://fresh.lhr.life\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        bot,
+        "SETTINGS",
+        Settings(webapp_url="https://expired.trycloudflare.com"),
+    )
+    message = fake_message()
+    await bot.app_command(message)
+    keyboard = message.answer.await_args.kwargs["reply_markup"]
+    assert keyboard.inline_keyboard[0][0].web_app.url.startswith(
+        "https://fresh.lhr.life?ticket="
     )
 
 
