@@ -40,6 +40,27 @@ async def test_start_and_invalid_link():
 
 
 @pytest.mark.asyncio
+async def test_personal_mini_app_button(monkeypatch):
+    monkeypatch.setattr(
+        bot,
+        "SETTINGS",
+        Settings(webapp_url="https://example.trycloudflare.com/"),
+        raising=False,
+    )
+    message = fake_message()
+    await bot.app_command(message)
+    keyboard = message.answer.await_args.kwargs["reply_markup"]
+    assert keyboard.inline_keyboard[0][0].web_app.url.startswith(
+        "https://example.trycloudflare.com/?ticket="
+    )
+    assert any(
+        button.callback_data == "home"
+        for row in keyboard.inline_keyboard
+        for button in row
+    )
+
+
+@pytest.mark.asyncio
 async def test_pause_resume_delete_and_filter_menu(monkeypatch):
     search = SimpleNamespace(
         id=7,

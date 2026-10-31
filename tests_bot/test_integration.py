@@ -17,7 +17,10 @@ from intelligence.analysis import (
     assess,
     condition_key,
     defects,
+    group_key,
+    memory_matches,
     model_key,
+    model_matches,
     seller_type,
 )
 from intelligence.config import Settings
@@ -47,6 +50,18 @@ def item(
         "closedItemsText": f"{closed} завершённых объявлений",
         "iva": {"SecondLineStep": [{"payload": {"value": seller}}]},
     }
+
+
+def test_generic_products_match_models_and_memory():
+    assert model_matches("MacBook Air M3 16/512, идеальное состояние", "MacBook Air M3")
+    assert model_matches("Продам Sony A7 IV body", "Sony A7 IV")
+    assert not model_matches("MacBook Air M2 16/512", "MacBook Air M3")
+    assert not model_matches("iPhone 15 Pro, 128 ГБ", "iPhone 15")
+    assert memory_matches("MacBook Air M3 16/512", "512 ГБ")
+    assert not memory_matches("MacBook Air M3 8/256", "512 ГБ")
+    first = Listing(title="MacBook Air M3 16/512", description="")
+    second = Listing(title="MacBook Air M3, 16 ГБ 512 ГБ", description="")
+    assert group_key(first) == group_key(second)
 
 
 class FakeSource:
@@ -182,6 +197,36 @@ def test_source_error_and_resume(system):
     service.scan_one(search.id)
     assert service.list_searches(1)[0].status == "active"
     assert service.list_searches(1)[0].failure_count == 0
+
+
+def test_deferred_resolution_survives_source_block_and_recovers(system):
+    service, source, _, _ = system
+    source.defer_resolution = True
+    calls = 0
+    original = source.resolve
+
+    def resolve(url):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("Источник ограничил доступ: refused(403)")
+        return original(url)
+
+    source.resolve = resolve
+    search = service.create_search(
+        1, "https://www.avito.ru/all/audio_i_video?q=airpods+max", title="AirPods Max"
+    )
+    assert calls == 0
+    assert search.city == "Вся Россия"
+    assert search.params == {}
+    assert search.id in service.scan_due()
+    assert "error" in service.scan_one(search.id)
+    assert service.stats(1, search.id)["search"].status == "source_unavailable"
+    result = service.scan_one(search.id)
+    assert result["complete"]
+    recovered = service.stats(1, search.id)["search"]
+    assert recovered.params == {"q": "iphone 15"}
+    assert recovered.status == "active"
 
 
 @pytest.mark.parametrize("fails", [False, True])

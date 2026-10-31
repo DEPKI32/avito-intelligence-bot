@@ -17,7 +17,9 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    MenuButtonWebApp,
     Message,
+    WebAppInfo,
 )
 
 import link_resolver
@@ -68,8 +70,11 @@ def button(text: str, data: str) -> InlineKeyboardButton:
 
 
 def menu():
+    webapp_url = getattr(globals().get("SETTINGS"), "webapp_url", "")
+    webapp = [[button("✨ Открыть приложение", "app")]] if webapp_url else []
     return InlineKeyboardMarkup(
-        inline_keyboard=[
+        inline_keyboard=webapp
+        + [
             [button("🔎 Мои мониторинги", "searches"), button("➕ Новый поиск", "new")],
             [
                 button("📊 Анализ рынка", "markets"),
@@ -115,6 +120,14 @@ def money(value):
     return f"{value:,} ₽".replace(",", " ") if value is not None else "—"
 
 
+STATUS_LABELS = {
+    "active": "🟢 Активен",
+    "scanning": "🔵 Собираю данные",
+    "paused": "⚪ На паузе",
+    "source_unavailable": "🟠 Источник недоступен",
+}
+
+
 def date(value):
     if not value:
         return "ещё не было"
@@ -156,16 +169,60 @@ async def start(message: Message, state: FSMContext):
     await state.clear()
     await display(
         message,
-        "Привет! Я слежу за объявлениями Авито и показываю подходящие предложения. Выберите действие:",
+        "✨ <b>AVITO INTELLIGENCE</b>\n"
+        "Ваш личный радар выгодных находок\n\n"
+        "🔎 <b>Ищите любые товары</b> по ссылке Авито\n"
+        "📈 <b>Следите за рынком</b> и изменением цен\n"
+        "💎 <b>Получайте подходящие варианты</b> без ручной проверки\n\n"
+        "Выберите, с чего начнём ↓",
         menu(),
     )
+
+
+async def show_app(target):
+    if not SETTINGS.webapp_url:
+        await display(target, "Mini App пока не подключён к HTTPS-адресу.", menu())
+        return
+    from .web import issue_ticket
+
+    ticket = issue_ticket(target.from_user.id)
+    sep = "&" if "?" in SETTINGS.webapp_url else "?"
+    url = f"{SETTINGS.webapp_url}{sep}ticket={ticket}"
+    await display(
+        target,
+        "✨ <b>Avito Intelligence</b>\n\nОткройте личный кабинет: ваши мониторинги, объявления и настройки уже там. Ссылка действует 10 минут.",
+        InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Открыть Mini App ↗", web_app=WebAppInfo(url=url)
+                    )
+                ],
+                [button("🏠 Главное меню", "home")],
+            ]
+        ),
+    )
+
+
+@router.message(Command("app"))
+async def app_command(message: Message):
+    await show_app(message)
+
+
+@router.callback_query(F.data == "app")
+async def app_callback(call: CallbackQuery):
+    await show_app(call)
 
 
 @router.message(Command("help"))
 async def help_command(message: Message):
     await display(
         message,
-        "Пришлите ссылку на страницу поиска Авито или нажмите «Новый поиск». После добавления я начну собирать рынок. Настройки и Excel доступны в карточке поиска. Оценка рынка основана на ценах объявлений, а не на подтверждённых сделках.",
+        "❓ <b>Как это работает</b>\n\n"
+        "1. Найдите нужный товар на Авито и скопируйте ссылку на страницу результатов.\n"
+        "2. Отправьте ссылку сюда или добавьте её в Mini App. Подойдут телефоны, ноутбуки, техника, мебель и другие товары.\n"
+        "3. Настройте цену, продавца и уведомления. Бот будет проверять новые объявления и снижение цены.\n\n"
+        "Рыночная оценка строится по ценам предложений, а не по завершённым сделкам.",
     )
 
 
@@ -191,14 +248,14 @@ async def settings_command(message: Message):
 @router.callback_query(F.data == "home")
 async def home(call: CallbackQuery, state: FSMContext):
     await state.clear()
-    await display(call, "Главное меню:", menu())
+    await display(call, "✨ <b>AVITO INTELLIGENCE</b>\nЧто хотите сделать?", menu())
 
 
 @router.callback_query(F.data == "help")
 async def help_callback(call: CallbackQuery):
     await display(
         call,
-        "Создайте поиск ссылкой Авито. Первичный сбор идёт постранично; новые события после него проверяются регулярно. Остановить и изменить условия можно в карточке мониторинга.",
+        "❓ <b>Подсказка</b>\n\nОтправьте ссылку на выдачу любых товаров Авито. Бот сохранит фильтры, соберёт рынок и затем будет регулярно проверять новые предложения. Условия можно изменить в карточке мониторинга или Mini App.",
     )
 
 
@@ -211,12 +268,22 @@ async def show_searches(target):
     rows = await asyncio.to_thread(SERVICE.list_searches, target.from_user.id)
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [button(f"{s.title[:30]} · {s.status}", f"search:{s.id}")] for s in rows
+            [
+                button(
+                    f"{'🟢' if s.status == 'active' else '🔵' if s.status == 'scanning' else '⚪' if s.status == 'paused' else '🟠'} {s.title[:34]}",
+                    f"search:{s.id}",
+                )
+            ]
+            for s in rows
         ]
         + [[button("➕ Новый поиск", "new"), button("🏠 Меню", "home")]]
     )
     await display(
-        target, "Ваши мониторинги:" if rows else "Пока нет мониторингов.", keyboard
+        target,
+        f"🔎 <b>Мои мониторинги</b>\n\nВсего: {len(rows)} · работают: {sum(s.status in ('active', 'scanning') for s in rows)}\nВыберите поиск ↓"
+        if rows
+        else "🔎 <b>Здесь пока пусто</b>\n\nДобавьте ссылку на поиск любого товара Авито — и я начну следить за новыми объявлениями.",
+        keyboard,
     )
 
 
@@ -225,7 +292,7 @@ async def new_search(call: CallbackQuery, state: FSMContext):
     await state.set_state(NewSearch.url)
     await display(
         call,
-        "Отправьте ссылку на страницу поиска Авито. Можно вставить её и без этой кнопки.",
+        "➕ <b>Новый мониторинг · шаг 1 из 4</b>\n\nПришлите ссылку на страницу результатов Авито. Это может быть поиск телефона, ноутбука, мебели, техники или другого товара.",
     )
 
 
@@ -244,10 +311,10 @@ async def receive_url(message: Message, state: FSMContext):
     await display(
         message,
         (
-            f"Ссылка принята. По URL: регион — {html.escape(parsed.city_slug)}, "
+            f"Ссылка принята. По URL: регион — {html.escape('Вся Россия' if parsed.city_slug == 'all' else parsed.city_slug)}, "
             f"категория — {html.escape(parsed.category_slug or 'не указана')}. "
-            "Фильтры Авито проверю при сохранении. Укажите точную модель "
-            "(например, iPhone 15) или отправьте «-», чтобы сравнивать группы автоматически."
+            "Фильтры Авито проверю при сохранении. Укажите точную модель или название товара "
+            "(например, MacBook Air M3 или Sony A7 IV). Отправьте «-», чтобы искать всё по ссылке."
         ),
     )
 
@@ -259,7 +326,8 @@ async def receive_model(message: Message, state: FSMContext):
     )
     await state.set_state(NewSearch.memory)
     await display(
-        message, "Объём памяти (например, 128 ГБ) или «-», если это не требуется:"
+        message,
+        "💾 <b>Шаг 3 из 4</b>\n\nУкажите объём памяти, если он важен (например, 128 ГБ или 16/512). Для мебели, техники и других товаров без памяти отправьте «-».",
     )
 
 
@@ -275,9 +343,6 @@ async def receive_memory(message: Message, state: FSMContext):
 @router.message(NewSearch.name)
 async def receive_name(message: Message, state: FSMContext):
     data = await state.get_data()
-    await display(
-        message, "Проверяю ссылку на Авито. Это может занять несколько минут…"
-    )
     try:
         search = await asyncio.to_thread(
             SERVICE.create_search,
@@ -299,7 +364,12 @@ async def receive_name(message: Message, state: FSMContext):
     await state.clear()
     await display(
         message,
-        f"✅ Создан «{html.escape(search.title)}». Регион: {html.escape(search.city)}. Фильтры Авито: {html.escape(search.filters_text or 'не определены')}. Первичный сбор начнётся автоматически.",
+        (
+            f"✅ <b>Мониторинг сохранён</b> · {html.escape(search.title)}\n"
+            f"Регион: {html.escape(search.city)}. Проверю ссылку и фильтры Авито в фоне; объявления появятся после первого сбора."
+            if not search.params
+            else f"✅ Создан «{html.escape(search.title)}». Регион: {html.escape(search.city)}. Фильтры Авито: {html.escape(search.filters_text or 'не определены')}. Первичный сбор начнётся автоматически."
+        ),
         search_buttons(search.id, search.status),
     )
 
@@ -324,12 +394,13 @@ async def search_card_with_id(call: CallbackQuery, search_id: int):
     s = info["search"]
     market = info["market"]
     text = (
-        f"<b>{html.escape(s.title)}</b>\nСтатус: {s.status}\nРегион: {html.escape(s.city)}\n"
-        f"Модель: {html.escape(s.target_model or 'по ссылке')} {html.escape(s.target_memory)}\n"
-        f"Объявлений: {info['total']}; интересных: {info['deals']}\n"
-        f"Последняя успешная проверка: {date(s.last_success)}\n"
-        f"Рынок{f' (по данным от {date(market.calculated_at)})' if market else ''}: {money(market.median) if market else 'Недостаточно данных для надёжной оценки рынка'}\n"
-        f"Порог: {s.discount_percent}% ниже рынка; оценка от {s.min_score}/100"
+        f"🔎 <b>{html.escape(s.title)}</b>\n"
+        f"{STATUS_LABELS.get(s.status, html.escape(s.status))} · {html.escape(s.city)}\n\n"
+        f"📦 Товар: {html.escape(s.target_model or 'всё по ссылке')} {html.escape(s.target_memory)}\n"
+        f"📊 В базе: <b>{info['total']}</b> · выгодных: <b>{info['deals']}</b>\n"
+        f"💰 Медиана: <b>{money(market.median) if market else 'пока недостаточно данных'}</b>\n"
+        f"🕒 Проверено: {date(s.last_success)}\n\n"
+        f"Уведомления: от {s.discount_percent}% ниже рынка · оценка от {s.min_score}/100"
     )
     if s.last_error:
         text += f"\nИсточник временно недоступен: {html.escape(s.last_error[:150])}"
@@ -987,11 +1058,44 @@ async def run(service: Service, settings: Settings):
     dispatcher = Dispatcher()
     dispatcher.include_router(router)
     task = asyncio.create_task(scheduler(bot))
+    web_server = None
+    web_task = None
     try:
+        if settings.webapp_url:
+            import uvicorn
+
+            from .web import create_app
+
+            web_server = uvicorn.Server(
+                uvicorn.Config(
+                    create_app(service, settings),
+                    host=settings.webapp_host,
+                    port=settings.webapp_port,
+                    access_log=False,
+                )
+            )
+            web_task = asyncio.create_task(web_server.serve())
+            for _ in range(100):
+                if web_server.started or web_task.done():
+                    break
+                await asyncio.sleep(0.05)
+            if web_server.started:
+                await bot.set_chat_menu_button(
+                    menu_button=MenuButtonWebApp(
+                        text="Открыть приложение",
+                        web_app=WebAppInfo(url=settings.webapp_url),
+                    )
+                )
+            else:
+                LOG.error("Mini App сервер не запустился; чат-бот продолжает работу")
         await dispatcher.start_polling(bot)
     finally:
         if hasattr(service.source, "stop"):
             service.source.stop()
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+        if web_server:
+            web_server.should_exit = True
+        if web_task:
+            await asyncio.gather(web_task, return_exceptions=True)
         await bot.session.close()

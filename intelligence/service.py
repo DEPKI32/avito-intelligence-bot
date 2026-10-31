@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from datetime import UTC, timedelta
 from pathlib import Path
 from typing import Any, Protocol
@@ -48,16 +49,23 @@ class BoundedClient(avito_client.CalmClient):
     def __init__(self, *, delay: float, log) -> None:
         super().__init__(delay=delay, log=log)
         self.stopping = threading.Event()
+        self.deadline: float | None = None
 
     def _pause(self) -> None:
         import random
-        import time
 
         wait = self.delay * random.uniform(0.7, 1.3) - (
             time.monotonic() - self.last_request
         )
+        if self.deadline is not None:
+            remaining = self.deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Авито слишком долго отвечает")
+            wait = min(max(0, wait), remaining)
         if self.stopping.wait(max(0, wait)):
             raise RuntimeError("Сбор остановлен")
+        if self.deadline is not None and time.monotonic() >= self.deadline:
+            raise TimeoutError("Авито слишком долго отвечает")
 
     def _open_session(self, catalog_url: str) -> None:
         self.session = main.requests.Session(
@@ -107,6 +115,8 @@ def seller_key(item: dict[str, Any]) -> str:
 
 
 class AvitoSource:
+    defer_resolution = True
+
     def __init__(self, settings: Settings) -> None:
         self.client = BoundedClient(
             delay=settings.request_delay_seconds,
@@ -121,17 +131,24 @@ class AvitoSource:
     def resolve(self, url: str) -> link_resolver.ResolvedSearch:
         url = validate_url(url)
         with self.lock:
-            cache = (
-                json.loads(self.cache_path.read_text())
-                if self.cache_path.exists()
-                else {}
-            )
-            result = link_resolver.resolve(self.client, url, locations_cache=cache)
-            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-            self.cache_path.write_text(
-                json.dumps(cache, ensure_ascii=False), encoding="utf-8"
-            )
-            return result
+            original_delay = self.client.delay
+            self.client.delay = min(original_delay, 10)
+            self.client.deadline = time.monotonic() + 120
+            try:
+                cache = (
+                    json.loads(self.cache_path.read_text())
+                    if self.cache_path.exists()
+                    else {}
+                )
+                result = link_resolver.resolve(self.client, url, locations_cache=cache)
+                self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+                self.cache_path.write_text(
+                    json.dumps(cache, ensure_ascii=False), encoding="utf-8"
+                )
+                return result
+            finally:
+                self.client.delay = original_delay
+                self.client.deadline = None
 
     def page(self, search: Search, number: int) -> avito_client.Page:
         with self.lock:
@@ -224,7 +241,19 @@ class Service:
         target_memory: str = "",
     ) -> Search:
         url = validate_url(url)
-        resolved = self.source.resolve(url)
+        resolved = (
+            None
+            if getattr(self.source, "defer_resolution", False)
+            else self.source.resolve(url)
+        )
+        parsed = link_resolver.parse_link(url)
+        initial_title = title or (
+            resolved.title
+            if resolved
+            else parsed.query.get("q")
+            or parsed.category_slug.replace("_", " ")
+            or "Новый поиск"
+        )
         with self.sessions.begin() as db:
             if not db.get(User, user_id):
                 db.add(User(id=user_id))
@@ -236,16 +265,21 @@ class Service:
                 raise ValueError("Этот поиск уже добавлен")
             search = Search(
                 user_id=user_id,
-                title=(title or resolved.title)[:200],
+                title=initial_title[:200],
                 url=url,
-                city=resolved.city,
-                profile=resolved.profile,
-                params=resolved.params,
-                filters_text="; ".join(resolved.filters),
+                city=resolved.city
+                if resolved
+                else ("Вся Россия" if parsed.city_slug == "all" else parsed.city_slug),
+                profile=resolved.profile if resolved else "goods",
+                params=resolved.params if resolved else {},
+                filters_text="; ".join(resolved.filters)
+                if resolved
+                else "Ожидает проверки Авито",
                 target_model=target_model[:120],
                 target_memory=target_memory[:30],
                 interval_seconds=self.settings.check_interval_seconds,
                 status="scanning",
+                next_run=now(),
             )
             db.add(search)
             db.flush()
@@ -361,6 +395,17 @@ class Service:
                     search.next_page if not search.scan_complete else search.watch_page
                 )
                 try:
+                    if not search.params:
+                        resolved = self.source.resolve(search.url)
+                        with self.sessions.begin() as update:
+                            current = update.get(Search, search_id)
+                            if not current or current.status == "paused":
+                                return {"skipped": True}
+                            current.params = resolved.params
+                            current.city = resolved.city
+                            current.profile = resolved.profile
+                            current.filters_text = "; ".join(resolved.filters)
+                        search.params = resolved.params
                     page = self.source.page(search, number)
                 except Exception as exc:
                     LOG.exception("Источник недоступен для поиска %s", search_id)

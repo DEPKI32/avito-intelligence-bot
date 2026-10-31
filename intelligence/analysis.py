@@ -33,6 +33,14 @@ _MEMORY = re.compile(r"\b(\d{2,4})\s*(гб|gb|тб|tb)\b", re.IGNORECASE)
 _IPHONE = re.compile(
     r"\biphone\s*(\d{1,2})(?:\s*(pro\s*max|pro|plus|mini))?\b", re.IGNORECASE
 )
+_COMPACT_MEMORY = re.compile(r"\b(\d{1,2})\s*/\s*(\d{2,4})\b")
+_SCREEN_SIZE = re.compile(
+    r"\b\d{1,2}(?:[.,]\d)?\s*(?:дюйм(?:а|ов)?|inch(?:es)?)\b", re.IGNORECASE
+)
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-zа-яё0-9]+", text.casefold())
 
 
 def model_key(text: str) -> str:
@@ -43,15 +51,42 @@ def model_key(text: str) -> str:
             + match[1]
             + (" " + re.sub(r"\s+", " ", match[2].lower()) if match[2] else "")
         )
-    return re.sub(r"\s+", " ", text.split(",")[0].strip().lower())[:100]
+    core = text.split(",")[0]
+    core = _COMPACT_MEMORY.sub(" ", core)
+    core = _SCREEN_SIZE.sub(" ", core)
+    core = _MEMORY.sub(" ", core)
+    return " ".join(_words(core)[:4])[:100]
+
+
+def model_matches(title: str, target: str) -> bool:
+    if _IPHONE.search(target):
+        return model_key(title) == model_key(target)
+    wanted = _words(target)
+    found = _words(title)
+    return bool(wanted) and any(
+        found[index : index + len(wanted)] == wanted
+        for index in range(len(found) - len(wanted) + 1)
+    )
+
+
+def memory_values(text: str) -> tuple[int, ...]:
+    pair = _COMPACT_MEMORY.search(text)
+    if pair and 4 <= int(pair[1]) <= 64 and 64 <= int(pair[2]) <= 4096:
+        return int(pair[1]), int(pair[2])
+    return tuple(
+        int(amount) * (1024 if unit.lower() in ("тб", "tb") else 1)
+        for amount, unit in _MEMORY.findall(text)
+    )[:2]
 
 
 def memory_key(text: str) -> str:
-    match = _MEMORY.search(text)
-    if not match:
-        return ""
-    amount = int(match[1]) * (1024 if match[2].lower() in ("тб", "tb") else 1)
-    return f"{amount}gb"
+    return "-".join(f"{amount}gb" for amount in memory_values(text))
+
+
+def memory_matches(text: str, target: str) -> bool:
+    wanted = memory_values(target)
+    found = memory_values(text)
+    return bool(wanted) and all(amount in found for amount in wanted)
 
 
 def condition_key(text: str) -> str:
@@ -65,7 +100,7 @@ def condition_key(text: str) -> str:
 
 def group_key(listing: Listing) -> str:
     text = listing.title + " " + listing.description
-    return f"{model_key(listing.title)}|{memory_key(text)}|{condition_key(text)}"
+    return f"{model_key(listing.title)}|{memory_key(listing.title) or memory_key(listing.description)}|{condition_key(text)}"
 
 
 def defects(text: str) -> list[str]:
@@ -176,13 +211,11 @@ def assess(listing: Listing, search: Search, market: Market | None) -> Assessmen
         listing.seller_label, listing.description, listing.closed_listings
     )
     exclusion = ""
-    if search.target_model and model_key(listing.title) != model_key(
-        search.target_model
-    ):
+    if search.target_model and not model_matches(listing.title, search.target_model):
         exclusion = "другая модель"
-    elif search.target_memory and memory_key(
-        listing.title + " " + listing.description
-    ) != memory_key(search.target_memory):
+    elif search.target_memory and not memory_matches(
+        listing.title + " " + listing.description, search.target_memory
+    ):
         exclusion = "другой объём памяти"
     elif listing.price is None or listing.price < 100:
         exclusion = "цена отсутствует или недостоверна"

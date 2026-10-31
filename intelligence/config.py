@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     ai_daily_request_limit: int = Field(default=50, ge=0, le=10000)
     quiet_hours_start: int | None = Field(default=None, ge=0, le=23)
     quiet_hours_end: int | None = Field(default=None, ge=0, le=23)
+    webapp_url: str = ""
+    webapp_host: str = "127.0.0.1"
+    webapp_port: int = Field(default=8080, ge=1, le=65535)
 
     @field_validator("timezone")
     @classmethod
@@ -54,6 +57,8 @@ class Settings(BaseSettings):
             self.ai_api_key and self.ai_base_url and self.ai_model
         ):
             raise ValueError("Для AI нужны AI_API_KEY, AI_BASE_URL и AI_MODEL")
+        if self.webapp_url and not self.webapp_url.startswith("https://"):
+            raise ValueError("WEBAPP_URL должен начинаться с https://")
         if self.database_url.startswith("sqlite:///"):
             Path(self.database_url.removeprefix("sqlite:///")).parent.mkdir(
                 parents=True, exist_ok=True
