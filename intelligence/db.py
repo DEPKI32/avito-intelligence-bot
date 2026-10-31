@@ -93,6 +93,9 @@ class Listing(Base):
     seller_key: Mapped[str] = mapped_column(String(100), default="")
     closed_listings: Mapped[int | None] = mapped_column(Integer)
     raw: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    creation_verdict: Mapped[str] = mapped_column(String(24), default="unchecked")
+    total_views: Mapped[int | None] = mapped_column(Integer)
+    today_views: Mapped[int | None] = mapped_column(Integer)
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
@@ -252,6 +255,18 @@ def session_factory(url: str):
                 connection.exec_driver_sql(
                     "ALTER TABLE listings ADD COLUMN seller_key VARCHAR(100) DEFAULT ''"
                 )
+            if "creation_verdict" not in listing_columns:
+                connection.exec_driver_sql(
+                    "ALTER TABLE listings ADD COLUMN creation_verdict VARCHAR(24) DEFAULT 'unchecked'"
+                )
+            if "total_views" not in listing_columns:
+                connection.exec_driver_sql(
+                    "ALTER TABLE listings ADD COLUMN total_views INTEGER"
+                )
+            if "today_views" not in listing_columns:
+                connection.exec_driver_sql(
+                    "ALTER TABLE listings ADD COLUMN today_views INTEGER"
+                )
             user_columns = {
                 row[1] for row in connection.exec_driver_sql("PRAGMA table_info(users)")
             }
@@ -271,5 +286,5 @@ def session_factory(url: str):
                 connection.exec_driver_sql(
                     "ALTER TABLE users ADD COLUMN last_digest_at DATETIME"
                 )
-            connection.exec_driver_sql("PRAGMA user_version=8")
+            connection.exec_driver_sql("PRAGMA user_version=9")
     return sessionmaker(engine, expire_on_commit=False)

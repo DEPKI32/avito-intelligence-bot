@@ -59,6 +59,10 @@ class UserEdit(StatesGroup):
     value = State()
 
 
+class Browse(StatesGroup):
+    query = State()
+
+
 def button(text: str, data: str) -> InlineKeyboardButton:
     return InlineKeyboardButton(text=text, callback_data=data)
 
@@ -96,6 +100,10 @@ def search_buttons(search_id: int, status: str):
             [
                 button("📊 Статистика", f"stats:{search_id}"),
                 button("💎 Выгодные варианты", f"offers:{search_id}"),
+            ],
+            [
+                button("🔎 Найти объявление", f"browse:{search_id}:recent:0"),
+                button("🔄 Проверить сейчас", f"scan_now:{search_id}"),
             ],
             [button("📥 Скачать Excel", f"export:{search_id}")],
             [button("🗑 Удалить", f"delete:{search_id}"), button("🏠 Меню", "home")],
@@ -340,6 +348,17 @@ async def toggle(call: CallbackQuery):
     await search_card_with_id(call, int(raw_id))
 
 
+@router.callback_query(F.data.startswith("scan_now:"))
+async def scan_now(call: CallbackQuery):
+    search_id = int(call.data.split(":")[1])
+    try:
+        await asyncio.to_thread(SERVICE.request_scan, call.from_user.id, search_id)
+    except ValueError as exc:
+        await call.answer(str(exc), show_alert=True)
+        return
+    await call.answer("Проверка поставлена в очередь")
+
+
 @router.callback_query(F.data.startswith("delete:"))
 async def delete_confirm(call: CallbackQuery):
     search_id = int(call.data.split(":")[1])
@@ -515,24 +534,9 @@ async def stats_callback(call: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("offers:"))
-async def offers_callback(call: CallbackQuery):
+async def offers_callback(call: CallbackQuery, state: FSMContext):
     search_id = int(call.data.split(":")[1])
-    rows = await asyncio.to_thread(SERVICE.offers, call.from_user.id, search_id, True)
-    text = "💎 Выгодные варианты:\n" + (
-        "\n".join(
-            f"• {html.escape(l.title[:70])} — {money(l.price)} · {m.score}/100"
-            for m, l in rows[:10]
-        )
-        if rows
-        else "Пока нет предложений, прошедших условия."
-    )
-    await display(
-        call,
-        text,
-        InlineKeyboardMarkup(
-            inline_keyboard=[[button("◀️ Назад", f"search:{search_id}")]]
-        ),
-    )
+    await browse_view(call, state, search_id, "deals", 0)
 
 
 @router.callback_query(F.data.startswith("export:"))
@@ -577,29 +581,90 @@ async def overview(call: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("database_search:"))
-async def database_search(call: CallbackQuery):
+async def database_search(call: CallbackQuery, state: FSMContext):
     search_id = int(call.data.split(":")[1])
-    rows = await asyncio.to_thread(SERVICE.offers, call.from_user.id, search_id, False)
-    details = [
-        [button(f"🔍 {listing.title[:32]}", f"analysis:{listing.id}")]
-        for _, listing in rows[:10]
-    ]
-    await display(
-        call,
-        f"Показаны последние {len(rows)} объявлений:\n"
-        + "\n".join(
-            f"• {html.escape(l.title[:65])} — {money(l.price)}" for _, l in rows[:15]
-        ),
-        InlineKeyboardMarkup(
-            inline_keyboard=details
-            + [
-                [
-                    button("📥 Excel", f"export:{search_id}"),
-                    button("◀️ Назад", "database"),
-                ]
-            ]
-        ),
+    await browse_view(call, state, search_id, "recent", 0)
+
+
+@router.callback_query(F.data.startswith("browse:"))
+async def browse_callback(call: CallbackQuery, state: FSMContext):
+    _, raw_id, sort, raw_page = call.data.split(":")
+    await browse_view(call, state, int(raw_id), sort, int(raw_page))
+
+
+async def browse_view(target, state: FSMContext, search_id: int, sort: str, page: int):
+    data = await state.get_data()
+    query = (
+        data.get("browse_query", "")
+        if data.get("browse_search_id") == search_id
+        else ""
     )
+    try:
+        rows, total = await asyncio.to_thread(
+            SERVICE.search_listings,
+            target.from_user.id,
+            search_id,
+            query,
+            sort,
+            page,
+            8,
+        )
+    except ValueError as exc:
+        await display(target, str(exc), menu())
+        return
+    labels = {"recent": "Последние", "cheap": "Дешевле", "deals": "Выгодные"}
+    text = f"📋 <b>{labels[sort]}</b> · найдено: {total}"
+    if query:
+        text += f"\nЗапрос: {html.escape(query)}"
+    text += "\n" + (
+        "\n".join(
+            f"• {html.escape(listing.title[:65])} — {money(listing.price)} · {match.score or 0}/100"
+            for match, listing in rows
+        )
+        if rows
+        else "Объявлений по этим условиям нет."
+    )
+    controls = [
+        [button(f"🔍 {listing.title[:32]}", f"analysis:{listing.id}")]
+        for _, listing in rows
+    ]
+    controls.append(
+        [
+            button("Последние", f"browse:{search_id}:recent:0"),
+            button("Дешевле", f"browse:{search_id}:cheap:0"),
+            button("Выгодные", f"browse:{search_id}:deals:0"),
+        ]
+    )
+    controls.append([button("🔎 Поиск по названию", f"browse_query:{search_id}")])
+    pages = []
+    if page > 0:
+        pages.append(button("◀️", f"browse:{search_id}:{sort}:{page - 1}"))
+    if (page + 1) * 8 < total:
+        pages.append(button("▶️", f"browse:{search_id}:{sort}:{page + 1}"))
+    if pages:
+        controls.append(pages)
+    controls.append([button("◀️ Мониторинг", f"search:{search_id}")])
+    await display(target, text, InlineKeyboardMarkup(inline_keyboard=controls))
+
+
+@router.callback_query(F.data.startswith("browse_query:"))
+async def browse_prompt(call: CallbackQuery, state: FSMContext):
+    search_id = int(call.data.split(":")[1])
+    await state.update_data(browse_search_id=search_id)
+    await state.set_state(Browse.query)
+    await display(call, "Введите часть названия объявления. Символ «-» покажет всё.")
+
+
+@router.message(Browse.query)
+async def browse_value(message: Message, state: FSMContext):
+    data = await state.get_data()
+    query = (message.text or "").strip()
+    if len(query) > 100:
+        await message.answer("Не более 100 символов. Попробуйте снова.")
+        return
+    await state.update_data(browse_query="" if query == "-" else query)
+    await state.set_state(None)
+    await browse_view(message, state, data["browse_search_id"], "recent", 0)
 
 
 @router.callback_query(F.data == "favorites")
@@ -704,6 +769,7 @@ async def listing_action(call: CallbackQuery):
             f"Причины: {html.escape('; '.join(match.reasons or []))}\n"
             f"История цен: {', '.join(money(x.price) for x in history) or 'нет'}\n"
             f"Фото: {html.escape(image.summary if image else 'не анализировались')}\n"
+            f"Проверка новизны: {html.escape({'new': 'похоже, новое', 'likely_republished': 'вероятно переопубликовано', 'unverified': 'не удалось проверить'}.get(listing.creation_verdict, 'ещё не проводилась'))}\n"
             f"Дополнительный анализ текста: {html.escape(text_analysis.summary if text_analysis else 'недоступен')}\n"
             f'<a href="{html.escape(listing.url, quote=True)}">Открыть на Авито</a>'
         )
@@ -814,6 +880,10 @@ async def scheduler(bot: Bot):
                 digest_text = "📋 <b>Сводка предложений</b>"
                 for row in rows[:40]:
                     note, _, _, listing = row
+                    if not await asyncio.to_thread(
+                        SERVICE.verify_notification, note.id
+                    ):
+                        continue
                     await prepare_candidate(listing)
                     status, match = await asyncio.to_thread(
                         SERVICE.notification_state, note.id
@@ -842,6 +912,11 @@ async def scheduler(bot: Bot):
                     continue
                 if await in_quiet_hours(search.user_id):
                     continue
+                verification = await asyncio.to_thread(
+                    SERVICE.verify_notification, note.id
+                )
+                if not verification:
+                    continue
                 await prepare_candidate(listing)
                 status, match = await asyncio.to_thread(
                     SERVICE.notification_state, note.id
@@ -863,6 +938,10 @@ async def scheduler(bot: Bot):
                     "Причины: " + html.escape("; ".join(match.reasons or [])),
                     f'<a href="{html.escape(listing.url, quote=True)}">Открыть объявление</a>',
                 ]
+                if verification == "unverified":
+                    lines.append(
+                        "Новизна объявления не подтверждена: страница недоступна или без данных о просмотрах."
+                    )
                 keyboard = InlineKeyboardMarkup(
                     inline_keyboard=[
                         [

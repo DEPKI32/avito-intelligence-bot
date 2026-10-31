@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 
 import apartments
 import avito_client
+import item_page
 import link_resolver
 import main
 
@@ -139,6 +140,12 @@ class AvitoSource:
                 params={**search.params, "s": "104"},
                 number=number,
             )
+
+    def verify_listing(
+        self, search: Search, listing: Listing
+    ) -> item_page.ItemPage | None:
+        with self.lock:
+            return item_page.fetch(self.client, listing.url, catalog_url=search.url)
 
 
 class Service:
@@ -269,6 +276,13 @@ class Service:
             search.next_run = now()
             if status == "active" and not search.scan_complete:
                 search.status = "scanning"
+
+    def request_scan(self, user_id: int, search_id: int) -> None:
+        with self.sessions.begin() as db:
+            search = self.owned(db, user_id, search_id)
+            if search.status == "paused":
+                raise ValueError("Сначала запустите мониторинг")
+            search.next_run = now()
 
     def set_filter(self, user_id: int, search_id: int, key: str, value: str) -> None:
         choices = {
@@ -883,6 +897,97 @@ class Service:
                     Listing.price < Match.market_price,
                 )
             return list(db.execute(query.order_by(Match.score.desc()).limit(limit)))
+
+    def search_listings(
+        self,
+        user_id: int,
+        search_id: int,
+        query: str = "",
+        sort: str = "recent",
+        page: int = 0,
+        limit: int = 10,
+    ):
+        if sort not in {"recent", "cheap", "deals"} or page < 0 or page > 1000:
+            raise ValueError("Неверные параметры поиска")
+        query = query.strip()[:100]
+        with self.sessions() as db:
+            search = self.owned(db, user_id, search_id)
+            statement = (
+                select(Match, Listing)
+                .join(Listing, Match.listing_id == Listing.id)
+                .where(Match.search_id == search_id)
+            )
+            if query:
+                statement = statement.where(
+                    Listing.title.contains(query, autoescape=True)
+                )
+            if sort == "deals":
+                statement = statement.where(
+                    Match.exclusion == "",
+                    Match.risk < 60,
+                    Match.score >= search.min_score,
+                    Match.market_price != None,
+                    Listing.price < Match.market_price,
+                ).order_by(Match.score.desc(), Match.last_seen.desc())
+            elif sort == "cheap":
+                statement = statement.where(Listing.price != None).order_by(
+                    Listing.price.asc(), Match.last_seen.desc()
+                )
+            else:
+                statement = statement.order_by(
+                    Match.last_seen.desc(), Listing.id.desc()
+                )
+            total = db.scalar(select(func.count()).select_from(statement.subquery()))
+            rows = list(db.execute(statement.offset(page * limit).limit(limit)))
+            return rows, total
+
+    def verify_notification(self, notification_id: int) -> str | None:
+        with self.sessions() as db:
+            note = db.get(Notification, notification_id)
+            if not note or note.status != "pending":
+                return None
+            search = db.get(Search, note.search_id)
+            listing = db.get(Listing, note.listing_id)
+            if not search or search.status != "active" or not listing:
+                return None
+            if note.event_key != "new":
+                return "price_drop"
+            if listing.creation_verdict not in {"unchecked", "likely_republished"}:
+                return listing.creation_verdict
+            verifier = getattr(self.source, "verify_listing", None)
+            needs_verification = listing.creation_verdict == "unchecked"
+        if needs_verification:
+            try:
+                page = verifier(search, listing) if verifier else None
+            except Exception:
+                LOG.exception("Не удалось проверить новизну объявления %s", listing.id)
+                page = None
+        else:
+            page = None
+        verdict = item_page.is_newly_created(page) if page else None
+        with self.sessions.begin() as db:
+            note = db.get(Notification, notification_id)
+            if not note or note.status != "pending":
+                return None
+            search = db.get(Search, note.search_id)
+            if not search or search.status != "active":
+                return None
+            listing = db.get(Listing, note.listing_id)
+            if listing.creation_verdict == "unchecked":
+                listing.creation_verdict = (
+                    "likely_republished"
+                    if verdict is False
+                    else "new"
+                    if verdict is True
+                    else "unverified"
+                )
+                if page:
+                    listing.total_views = page.total_views
+                    listing.today_views = page.today_views
+            if listing.creation_verdict == "likely_republished":
+                note.status = "cancelled"
+                return None
+            return listing.creation_verdict
 
     def pending(self):
         with self.sessions() as db:

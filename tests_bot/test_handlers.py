@@ -118,3 +118,30 @@ async def test_quiet_hours_blocks_overnight(monkeypatch):
         raising=False,
     )
     assert await bot.in_quiet_hours(1)
+
+
+@pytest.mark.asyncio
+async def test_browse_and_manual_scan_buttons(monkeypatch):
+    listing = SimpleNamespace(id="42", title="iPhone 15", price=32000)
+    match = SimpleNamespace(score=84)
+    service = SimpleNamespace(
+        search_listings=Mock(return_value=([(match, listing)], 17)),
+        request_scan=Mock(),
+    )
+    state = SimpleNamespace(get_data=AsyncMock(return_value={}))
+    monkeypatch.setattr(bot, "SERVICE", service, raising=False)
+    call = fake_call("browse:7:cheap:1")
+    await bot.browse_callback(call, state)
+    service.search_listings.assert_called_once_with(1, 7, "", "cheap", 1, 8)
+    buttons = [
+        entry.callback_data
+        for row in call.answer.await_args.kwargs["reply_markup"].inline_keyboard
+        for entry in row
+    ]
+    assert "analysis:42" in buttons
+    assert "browse:7:cheap:0" in buttons
+    assert "browse:7:cheap:2" in buttons
+    scan_call = fake_call("scan_now:7")
+    await bot.scan_now(scan_call)
+    service.request_scan.assert_called_once_with(1, 7)
+    assert "очередь" in scan_call.answer.await_args.args[0]

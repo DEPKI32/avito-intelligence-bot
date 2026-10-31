@@ -54,7 +54,17 @@ def test_all_main_buttons_have_data():
         for row in search_buttons(1, "active").inline_keyboard
         for button in row
     }
-    assert card == {"pause", "filters", "stats", "offers", "export", "delete", "home"}
+    assert card == {
+        "pause",
+        "filters",
+        "stats",
+        "offers",
+        "browse",
+        "scan_now",
+        "export",
+        "delete",
+        "home",
+    }
     paused = {
         button.callback_data.split(":")[0]
         for row in search_buttons(1, "paused").inline_keyboard
