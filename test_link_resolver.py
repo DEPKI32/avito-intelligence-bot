@@ -48,6 +48,34 @@ def test_link_parts_prefer_query_blob_over_path_blob():
     assert phones.blob == "ASgBAgICA0SywA2SoO0RtMANzqs5sMENiPw3"
 
 
+def test_all_russia_search_resolves_without_city_lookup():
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        def page_payload(self, *, catalog_url, params, number):
+            self.calls.append(params)
+            return {
+                "rubricators": {"categoryTreeTop": [
+                    {"url": "/all/audio_i_video", "categoryId": 100, "subs": []},
+                ]},
+                "catalog": {"items": []},
+                "seo": {"h1": "Аудио и видео"},
+            }
+
+    client = Client()
+    result = lr.resolve(
+        client,
+        "https://www.avito.ru/all/audio_i_video?q=airpods+max",
+        locations_cache={},
+    )
+    assert result.city == "Вся Россия"
+    assert result.params == {
+        "categoryId": "100", "locationId": "0", "q": "airpods max"
+    }
+    assert all(call["locationId"] == "0" for call in client.calls)
+
+
 def test_listing_link_and_foreign_site_are_rejected():
     with pytest.raises(lr.LinkError):
         lr.parse_link("https://www.avito.ru/sankt-peterburg/telefony/iphone_15_128_gb_8157171618")

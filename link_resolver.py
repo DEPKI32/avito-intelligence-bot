@@ -154,6 +154,8 @@ def parse_link(url: str) -> ParsedLink:
 
 def resolve_location(client: avito_client.CalmClient, slug: str, cache: dict[str, Any], *, referer: str) -> tuple[int, str]:
     """Location id and name for a city slug, asking Avito's suggest."""
+    if slug == "all":
+        return 0, "Вся Россия"
     if slug in cache:
         return int(cache[slug]["id"]), cache[slug]["name"]
     for letters in (5, 4, 3):
@@ -314,12 +316,13 @@ def applied_filters(payload: dict[str, Any]) -> list[str]:
     """Human-readable filters Avito reports as active, e.g. "Количество комнат: 2 комнаты"."""
     lines = []
     for f in filters_of(payload).values():
+        filter_id = f.id
         current = None
 
         def find(node: Any) -> None:
             nonlocal current
             if isinstance(node, dict):
-                if node.get("id") == f.id and "currentValue" in node:
+                if node.get("id") == filter_id and "currentValue" in node:
                     current = node["currentValue"]
                     return
                 for value in node.values():
