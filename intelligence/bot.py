@@ -23,8 +23,6 @@ from aiogram.types import (
     WebAppInfo,
 )
 
-import link_resolver
-
 from .config import Settings
 from .export import export_search
 from .service import Service, validate_url
@@ -327,13 +325,11 @@ async def receive_url(message: Message, state: FSMContext):
         return
     await state.update_data(url=url)
     await state.set_state(NewSearch.model)
-    parsed = link_resolver.parse_link(url)
     await display(
         message,
         (
-            f"Ссылка принята. По URL: регион — {html.escape('Вся Россия' if parsed.city_slug == 'all' else parsed.city_slug)}, "
-            f"категория — {html.escape(parsed.category_slug or 'не указана')}. "
-            "Фильтры Авито проверю при сохранении. Укажите точную модель или название товара "
+            "Ссылка принята. Регион, категорию и фильтры Авито проверю после сохранения в фоне. "
+            "Укажите точную модель или название товара "
             "(например, MacBook Air M3 или Sony A7 IV). Отправьте «-», чтобы искать всё по ссылке."
         ),
     )
