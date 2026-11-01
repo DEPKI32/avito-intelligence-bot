@@ -7,7 +7,7 @@ import time
 from datetime import UTC, timedelta
 from pathlib import Path
 from typing import Any, Protocol
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from sqlalchemy import func, select
 
@@ -83,8 +83,6 @@ class BoundedClient(avito_client.CalmClient):
 
 
 def validate_url(url: str) -> str:
-    if len(url) > 2048:
-        raise ValueError("Ссылка слишком длинная")
     parts = urlsplit(url.strip())
     if (
         parts.scheme != "https"
@@ -94,8 +92,19 @@ def validate_url(url: str) -> str:
         or parts.port
     ):
         raise ValueError("Нужна ссылка HTTPS на avito.ru")
-    link_resolver.parse_link(url)
-    return url.strip()
+    normalized = urlunsplit(
+        (
+            "https",
+            parts.hostname,
+            quote(parts.path, safe="/%:@"),
+            quote(parts.query, safe="=&+;%:@/?,"),
+            "",
+        )
+    )
+    if len(normalized) > 2048:
+        raise ValueError("Ссылка слишком длинная")
+    link_resolver.parse_link(normalized)
+    return normalized
 
 
 def seller_key(item: dict[str, Any]) -> str:
@@ -269,7 +278,9 @@ class Service:
                 url=url,
                 city=resolved.city
                 if resolved
-                else ("Вся Россия" if parsed.city_slug == "all" else parsed.city_slug),
+                else (
+                    "Вся Россия" if parsed.city_slug == "all" else "Регион уточняется"
+                ),
                 profile=resolved.profile if resolved else "goods",
                 params=resolved.params if resolved else {},
                 filters_text="; ".join(resolved.filters)
@@ -882,6 +893,32 @@ class Service:
                 )
             )
 
+    def favorite_details(
+        self, user_id: int, limit: int = 30
+    ) -> list[tuple[Match, Listing]]:
+        with self.sessions() as db:
+            rows = db.execute(
+                select(Match, Listing)
+                .join(Listing, Match.listing_id == Listing.id)
+                .join(Search, Match.search_id == Search.id)
+                .join(SavedListing, SavedListing.listing_id == Listing.id)
+                .where(
+                    Search.user_id == user_id,
+                    SavedListing.user_id == user_id,
+                    SavedListing.interested == True,
+                )
+                .order_by(Match.score.desc(), Match.last_seen.desc())
+            )
+            seen = set()
+            result = []
+            for match, listing in rows:
+                if listing.id not in seen:
+                    result.append((match, listing))
+                    seen.add(listing.id)
+                if len(result) == limit:
+                    break
+            return result
+
     def stats(self, user_id: int, search_id: int) -> dict[str, Any]:
         with self.sessions() as db:
             search = self.owned(db, user_id, search_id)
@@ -922,6 +959,65 @@ class Service:
                 "deals": deals,
                 "market": market,
             }
+
+    def market_history(
+        self, user_id: int, search_id: int, days: int = 30
+    ) -> list[MarketSnapshot]:
+        """Latest market snapshot for each day, for the current comparison group."""
+        if days not in {7, 30, 90}:
+            raise ValueError("Период должен быть 7, 30 или 90 дней")
+        with self.sessions() as db:
+            self.owned(db, user_id, search_id)
+            latest = db.scalar(
+                select(MarketSnapshot)
+                .where(MarketSnapshot.search_id == search_id)
+                .order_by(MarketSnapshot.calculated_at.desc(), MarketSnapshot.id.desc())
+                .limit(1)
+            )
+            if latest is None:
+                return []
+            snapshots = db.scalars(
+                select(MarketSnapshot)
+                .where(
+                    MarketSnapshot.search_id == search_id,
+                    MarketSnapshot.group_key == latest.group_key,
+                    MarketSnapshot.calculated_at >= now() - timedelta(days=days),
+                )
+                .order_by(MarketSnapshot.calculated_at.desc(), MarketSnapshot.id.desc())
+            )
+            by_day = {}
+            for snapshot in snapshots:
+                by_day.setdefault(snapshot.calculated_at.date(), snapshot)
+            return list(reversed(list(by_day.values())))
+
+    def best_deals(self, user_id: int, limit: int = 30) -> list[tuple[Match, Listing]]:
+        """Best current deals across all of a user's searches."""
+        with self.sessions() as db:
+            discount = (Match.market_price - Listing.price) * 1.0 / Match.market_price
+            candidates = db.execute(
+                select(Match, Listing)
+                .join(Search, Match.search_id == Search.id)
+                .join(Listing, Match.listing_id == Listing.id)
+                .where(
+                    Search.user_id == user_id,
+                    Match.exclusion == "",
+                    Match.risk < 60,
+                    Match.score >= Search.min_score,
+                    Match.market_price > 0,
+                    Listing.price != None,
+                    Listing.price < Match.market_price,
+                )
+                .order_by(discount.desc(), Match.score.desc())
+            )
+            seen = set()
+            result = []
+            for match, listing in candidates:
+                if listing.id not in seen:
+                    result.append((match, listing))
+                    seen.add(listing.id)
+                if len(result) == limit:
+                    break
+            return result
 
     def offers(
         self, user_id: int, search_id: int, only_deals: bool = False, limit: int = 20

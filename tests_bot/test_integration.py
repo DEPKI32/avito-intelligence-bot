@@ -58,6 +58,16 @@ def test_generic_products_match_models_and_memory():
     assert not model_matches("MacBook Air M2 16/512", "MacBook Air M3")
     assert not model_matches("iPhone 15 Pro, 128 ГБ", "iPhone 15")
     assert memory_matches("MacBook Air M3 16/512", "512 ГБ")
+
+
+def test_avito_url_with_cyrillic_query_is_encoded_before_request():
+    url = validate_url("https://www.avito.ru/moskva/mebel_i_interer?q=диван")
+    assert (
+        url
+        == "https://www.avito.ru/moskva/mebel_i_interer?q=%D0%B4%D0%B8%D0%B2%D0%B0%D0%BD"
+    )
+    assert link_resolver.parse_link(url).query["q"] == "диван"
+    assert validate_url(url) == url
     assert not memory_matches("MacBook Air M3 8/256", "512 ГБ")
     first = Listing(title="MacBook Air M3 16/512", description="")
     second = Listing(title="MacBook Air M3, 16 ГБ 512 ГБ", description="")
@@ -422,9 +432,15 @@ def test_bounded_client_stops_on_source_block(monkeypatch):
         client._pause()
 
 
+def test_new_listing_threshold_is_explicit_near_midnight():
+    page = item_page.ItemPage("сегодня", None, 100, 5)
+    assert item_page.is_newly_created(page, now=datetime(2026, 11, 1, 0, 30))
+    assert not item_page.is_newly_created(page, now=datetime(2026, 11, 1, 12, 0))
+
+
 @pytest.mark.parametrize(
     ("views", "today", "expected"),
-    [(100, 5, None), (12, 10, "new")],
+    [(200, 5, None), (12, 10, "new")],
 )
 def test_new_listing_verification_blocks_likely_reposts(system, views, today, expected):
     service, source, sessions, _ = system

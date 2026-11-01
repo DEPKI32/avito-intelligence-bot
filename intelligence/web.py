@@ -54,6 +54,8 @@ def exchange_ticket(value: str, settings: Settings) -> tuple[str, int]:
 
 
 def session_user(value: str, settings: Settings) -> int:
+    if not value:
+        raise HTTPException(401, "Требуется вход через Telegram")
     current = int(time.time())
     with _auth_lock:
         entry = _sessions.get(value)
@@ -218,6 +220,12 @@ def create_app(service: Service, settings: Settings) -> FastAPI:
         recent.sort(key=lambda row: row["last_seen"] or "", reverse=True)
         return {"searches": rows, "recent": recent[:8]}
 
+    @app.get("/api/deals")
+    def deals(user: int = Depends(user_id)):
+        return [
+            listing_data(match, listing) for match, listing in service.best_deals(user)
+        ]
+
     @app.post("/api/session")
     def login(body: TicketExchange, response: Response):
         session, _ = exchange_ticket(body.ticket, settings)
@@ -246,6 +254,26 @@ def create_app(service: Service, settings: Settings) -> FastAPI:
         try:
             info = service.stats(user, search_id)
             return search_data(info["search"], info)
+        except ValueError as exc:
+            invalid(exc)
+
+    @app.get("/api/searches/{search_id}/market-history")
+    def market_history(
+        search_id: int,
+        days: int = Query(default=30),
+        user: int = Depends(user_id),
+    ):
+        try:
+            return [
+                {
+                    "at": stamp(snapshot.calculated_at),
+                    "median": snapshot.median,
+                    "low": snapshot.low,
+                    "high": snapshot.high,
+                    "count": snapshot.count,
+                }
+                for snapshot in service.market_history(user, search_id, days)
+            ]
         except ValueError as exc:
             invalid(exc)
 
@@ -320,14 +348,7 @@ def create_app(service: Service, settings: Settings) -> FastAPI:
     @app.get("/api/favorites")
     def favorites(user: int = Depends(user_id)):
         return [
-            {
-                "id": item.id,
-                "title": item.title,
-                "price": item.price,
-                "url": item.url,
-                "seller_label": item.seller_label,
-            }
-            for item in service.favorites(user)
+            listing_data(match, item) for match, item in service.favorite_details(user)
         ]
 
     @app.post("/api/listings/{listing_id}/favorite")
