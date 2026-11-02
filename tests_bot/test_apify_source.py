@@ -62,7 +62,9 @@ def test_incremental_feed_keeps_existing_listings_and_accepts_new_ones(
 
 
 def test_apify_error_does_not_look_like_empty_search(tmp_path, monkeypatch):
-    settings = Settings(apify_token="test-only")
+    settings = Settings(
+        apify_token="test-only", database_url=f"sqlite:///{tmp_path / 'feed.sqlite3'}"
+    )
     source = ApifySource(settings)
 
     def bad_post(url, **kwargs):
@@ -78,3 +80,30 @@ def test_apify_error_does_not_look_like_empty_search(tmp_path, monkeypatch):
         assert "Apify не вернул" in str(exc)
     else:
         raise AssertionError("Неудачный запрос принят за пустую выдачу")
+
+
+def test_daily_free_plan_limit_blocks_extra_run(tmp_path, monkeypatch):
+    settings = Settings(
+        apify_token="test-only",
+        apify_daily_run_limit=1,
+        database_url=f"sqlite:///{tmp_path / 'feed.sqlite3'}",
+    )
+    source = ApifySource(settings)
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append(url)
+        return httpx.Response(200, json=[], request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    search = type(
+        "Search", (), {"id": 1, "user_id": 1, "url": "https://www.avito.ru/all?q=диван"}
+    )()
+    assert source.page(search, 1).items == ()
+    try:
+        source.page(search, 1)
+    except RuntimeError as exc:
+        assert "Дневной лимит" in str(exc)
+    else:
+        raise AssertionError("Превышен дневной лимит бесплатного тарифа")
+    assert len(calls) == 1

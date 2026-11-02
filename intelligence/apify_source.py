@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+import json
+import threading
+from datetime import UTC, datetime
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
@@ -82,6 +85,29 @@ class ApifySource:
             raise ValueError("Для SOURCE_PROVIDER=apify укажите APIFY_TOKEN")
         self.token = settings.apify_token
         self.max_charge = settings.apify_max_charge_usd
+        self.daily_run_limit = settings.apify_daily_run_limit
+        database_path = settings.database_url.removeprefix("sqlite:///")
+        self.quota_path = Path(database_path).parent / "apify_daily_runs.json"
+        self.quota_lock = threading.Lock()
+
+    def _reserve_run(self) -> None:
+        today = datetime.now(UTC).date().isoformat()
+        with self.quota_lock:
+            try:
+                state = json.loads(self.quota_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                state = {}
+            used = int(state.get("count", 0)) if state.get("date") == today else 0
+            if used >= self.daily_run_limit:
+                raise RuntimeError(
+                    "Дневной лимит проверок Apify на бесплатном тарифе исчерпан"
+                )
+            self.quota_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.quota_path.with_suffix(".tmp")
+            temporary.write_text(
+                json.dumps({"date": today, "count": used + 1}), encoding="utf-8"
+            )
+            temporary.replace(self.quota_path)
 
     def resolve(self, url: str) -> link_resolver.ResolvedSearch:
         url = validate_url(url)
@@ -103,6 +129,7 @@ class ApifySource:
     def page(self, search: Search, number: int) -> avito_client.Page:
         if number != 1:
             raise ValueError("Источник Apify проверяет первую страницу поиска")
+        self._reserve_run()
         state_key = f"aib-{search.user_id}-{search.id}-{hashlib.sha256(search.url.encode()).hexdigest()[:12]}"
         payload = {
             "mode": "url",

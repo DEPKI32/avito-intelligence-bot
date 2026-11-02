@@ -32,6 +32,10 @@ def main():
         from .apify_source import ApifySource
 
         source = ApifySource(settings)
+    elif settings.source_provider == "apify_dami":
+        from .dami_source import DamiSource
+
+        source = DamiSource(settings, sessions)
     else:
         source = AvitoSource(settings)
     asyncio.run(run(Service(sessions, source, settings), settings))
