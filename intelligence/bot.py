@@ -38,7 +38,7 @@ SETTINGS: Settings
 class Access(BaseMiddleware):
     async def __call__(self, handler, event, data):
         user = getattr(event, "from_user", None)
-        if user is None or user.id not in SETTINGS.allowed_ids:
+        if user is None or not SETTINGS.user_allowed(user.id):
             if isinstance(event, CallbackQuery):
                 await event.answer("Нет доступа", show_alert=True)
             return None
@@ -1076,6 +1076,7 @@ async def run(service: Service, settings: Settings):
     task = asyncio.create_task(scheduler(bot))
     web_server = None
     web_task = None
+    polling_task = None
     try:
         if settings.webapp_url:
             import uvicorn
@@ -1103,13 +1104,24 @@ async def run(service: Service, settings: Settings):
                     )
                 )
             else:
-                LOG.error("Mini App сервер не запустился; чат-бот продолжает работу")
-        await dispatcher.start_polling(bot)
+                raise RuntimeError("Mini App сервер не запустился")
+        polling_task = asyncio.create_task(dispatcher.start_polling(bot))
+        if web_task:
+            done, _ = await asyncio.wait(
+                {polling_task, web_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if web_task in done:
+                await web_task
+                raise RuntimeError("Mini App сервер остановился")
+        await polling_task
     finally:
         if hasattr(service.source, "stop"):
             service.source.stop()
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+        if polling_task:
+            polling_task.cancel()
+            await asyncio.gather(polling_task, return_exceptions=True)
         if web_server:
             web_server.should_exit = True
         if web_task:

@@ -144,6 +144,16 @@ async def test_access_rejects_unknown_user():
 
 
 @pytest.mark.asyncio
+async def test_public_access_accepts_other_telegram_users(monkeypatch):
+    monkeypatch.setattr(bot, "SETTINGS", Settings(public_access=True))
+    handler = AsyncMock(return_value="ok")
+    event = fake_message("/start")
+    event.from_user.id = 99
+    assert await bot.Access()(handler, event, {}) == "ok"
+    handler.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_quiet_hours_blocks_overnight(monkeypatch):
     from datetime import datetime
 

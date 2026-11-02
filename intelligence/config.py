@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     telegram_bot_token: str = ""
     telegram_allowed_user_ids: str = ""
+    public_access: bool = False
     database_url: str = "sqlite:///data/intelligence.sqlite3"
     check_interval_seconds: int = Field(default=900, ge=300, le=86400)
     request_delay_seconds: int = Field(default=30, ge=10, le=300)
@@ -47,6 +48,9 @@ class Settings(BaseSettings):
             for x in self.telegram_allowed_user_ids.split(",")
             if x.strip()
         }
+
+    def user_allowed(self, user_id: int) -> bool:
+        return self.public_access or user_id in self.allowed_ids
 
     def validate_runtime(self) -> None:
         if not self.telegram_bot_token:

@@ -68,6 +68,33 @@ def test_init_data_signature_age_and_allowlist():
         validated_user(signed(settings, user_id=2), settings, at=1_800_000_100)
 
 
+def test_public_telegram_users_have_private_searches(tmp_path):
+    settings = Settings(
+        telegram_bot_token="123:TEST",
+        telegram_allowed_user_ids="1",
+        public_access=True,
+        database_url=f"sqlite:///{tmp_path / 'public.sqlite'}",
+    )
+    service = Service(session_factory(settings.database_url), Source(), settings)
+    client = TestClient(create_app(service, settings), base_url="https://testserver")
+    first = {"X-Telegram-Init-Data": signed(settings, auth_date=int(time.time()))}
+    second = {
+        "X-Telegram-Init-Data": signed(settings, user_id=2, auth_date=int(time.time()))
+    }
+    assert client.get("/api/dashboard").status_code == 401
+    search = client.post("/api/searches", headers=second, json={"url": URL})
+    assert search.status_code == 201
+    assert len(client.get("/api/dashboard", headers=second).json()["searches"]) == 1
+    assert client.get("/api/dashboard", headers=first).json()["searches"] == []
+    assert (
+        client.get(f"/api/searches/{search.json()['id']}", headers=first).status_code
+        == 400
+    )
+    ticket = issue_ticket(2)
+    assert client.post("/api/session", json={"ticket": ticket}).status_code == 200
+    assert len(client.get("/api/dashboard").json()["searches"]) == 1
+
+
 def test_web_api_uses_same_service_and_enforces_ownership(tmp_path):
     settings = Settings(
         telegram_bot_token="123:TEST",
@@ -81,6 +108,7 @@ def test_web_api_uses_same_service_and_enforces_ownership(tmp_path):
         "X-Telegram-Init-Data": signed(settings, user_id=2, auth_date=int(time.time()))
     }
     assert client.get("/").status_code == 200
+    assert client.get("/healthz").json() == {"ok": True}
     assert client.get("/api/dashboard").status_code == 401
     created = client.post(
         "/api/searches", headers=header, json={"url": URL, "target_model": "iPhone 15"}

@@ -46,7 +46,7 @@ def exchange_ticket(value: str, settings: Settings) -> tuple[str, int]:
     current = int(time.time())
     with _auth_lock:
         entry = _tickets.pop(value, None)
-        if not entry or entry[1] <= current or entry[0] not in settings.allowed_ids:
+        if not entry or entry[1] <= current or not settings.user_allowed(entry[0]):
             raise HTTPException(401, "Ссылка входа устарела. Отправьте боту /app снова")
         session = secrets.token_urlsafe(32)
         _sessions[session] = (entry[0], current + AUTH_LIFETIME)
@@ -59,7 +59,7 @@ def session_user(value: str, settings: Settings) -> int:
     current = int(time.time())
     with _auth_lock:
         entry = _sessions.get(value)
-        if not entry or entry[1] <= current or entry[0] not in settings.allowed_ids:
+        if not entry or entry[1] <= current or not settings.user_allowed(entry[0]):
             _sessions.pop(value, None)
             raise HTTPException(401, "Срок входа истёк. Отправьте боту /app")
         return entry[0]
@@ -89,7 +89,7 @@ def validated_user(init_data: str, settings: Settings, at: int | None = None) ->
             raise ValueError("expired")
         user = json.loads(data["user"])
         user_id = user["id"]
-        if type(user_id) is not int or user_id not in settings.allowed_ids:
+        if type(user_id) is not int or not settings.user_allowed(user_id):
             raise ValueError("unknown user")
         return user_id
     except (ValueError, KeyError, TypeError, json.JSONDecodeError):
@@ -190,6 +190,10 @@ class TicketExchange(BaseModel):
 
 def create_app(service: Service, settings: Settings) -> FastAPI:
     app = FastAPI(title="Avito Intelligence Mini App", docs_url=None, redoc_url=None)
+
+    @app.get("/healthz")
+    def healthz():
+        return {"ok": True}
 
     def user_id(
         x_telegram_init_data: str = Header(default=""),
