@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
+import httpx
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
@@ -27,7 +28,7 @@ from .config import Settings
 from .export import export_search
 from .service import Service, validate_url
 from .text_ai import analyze_text
-from .vision import image_urls, inspect_images
+from .vision import download_image, image_urls, inspect_images
 
 LOG = logging.getLogger(__name__)
 router = Router()
@@ -1066,14 +1067,20 @@ async def scheduler(bot: Bot):
                     caption = "\n".join(lines)
                     if photos and len(caption) <= 1000:
                         try:
+                            photo_data = await download_image(photos[0])
                             await bot.send_photo(
                                 search.user_id,
-                                photos[0],
+                                BufferedInputFile(photo_data, filename="avito.jpg"),
                                 caption=caption,
                                 parse_mode="HTML",
                                 reply_markup=keyboard,
                             )
-                        except TelegramBadRequest:
+                        except (
+                            TelegramBadRequest,
+                            httpx.HTTPError,
+                            OSError,
+                            ValueError,
+                        ):
                             LOG.info("Фото недоступно для объявления %s", listing.id)
                             await bot.send_message(
                                 search.user_id,
