@@ -9,7 +9,9 @@ from intelligence.db import Match, session_factory
 from intelligence.service import Service
 
 
-def test_incremental_feed_keeps_existing_listings_and_accepts_new_ones(tmp_path, monkeypatch):
+def test_incremental_feed_keeps_existing_listings_and_accepts_new_ones(
+    tmp_path, monkeypatch
+):
     settings = Settings(
         database_url=f"sqlite:///{tmp_path / 'feed.sqlite3'}",
         telegram_allowed_user_ids="1",
@@ -28,16 +30,24 @@ def test_incremental_feed_keeps_existing_listings_and_accepts_new_ones(tmp_path,
         "sellerType": "private",
         "address": "Москва",
     }
-    second = {**first, "id": "12345679", "url": first["url"].replace("12345678", "12345679")}
+    second = {
+        **first,
+        "id": "12345679",
+        "url": first["url"].replace("12345678", "12345679"),
+    }
     batches = [[first], [], [second]]
     requests = []
 
     def fake_post(url, *, headers, params, json, timeout):
         requests.append((url, headers, params, json, timeout))
-        return httpx.Response(200, json=batches.pop(0), request=httpx.Request("POST", url))
+        return httpx.Response(
+            200, json=batches.pop(0), request=httpx.Request("POST", url)
+        )
 
     monkeypatch.setattr(httpx, "post", fake_post)
-    search = service.create_search(1, "https://www.avito.ru/moskva/audio_i_video?q=airpods")
+    search = service.create_search(
+        1, "https://www.avito.ru/moskva/audio_i_video?q=airpods"
+    )
     assert service.scan_one(search.id)["complete"] is True
     assert service.scan_one(search.id)["new"] == 0
     assert service.scan_one(search.id)["new"] == 1
@@ -59,7 +69,9 @@ def test_apify_error_does_not_look_like_empty_search(tmp_path, monkeypatch):
         return httpx.Response(500, request=httpx.Request("POST", url))
 
     monkeypatch.setattr(httpx, "post", bad_post)
-    search = type("Search", (), {"id": 1, "user_id": 1, "url": "https://www.avito.ru/all?q=диван"})()
+    search = type(
+        "Search", (), {"id": 1, "user_id": 1, "url": "https://www.avito.ru/all?q=диван"}
+    )()
     try:
         source.page(search, 1)
     except RuntimeError as exc:

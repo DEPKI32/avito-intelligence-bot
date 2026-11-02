@@ -23,23 +23,31 @@ def _item(row: dict) -> dict | None:
     ident = str(row.get("id") or "")
     url = str(row.get("url") or "")
     parts = urlsplit(url)
-    if not ident.isdecimal() or parts.scheme != "https" or parts.hostname not in {
-        "avito.ru", "www.avito.ru"
-    } or not parts.path.endswith("_" + ident):
+    if (
+        not ident.isdecimal()
+        or parts.scheme != "https"
+        or parts.hostname not in {"avito.ru", "www.avito.ru"}
+        or not parts.path.endswith("_" + ident)
+    ):
         return None
     price = row.get("price")
     if isinstance(price, bool) or not isinstance(price, (int, float)):
         price = None
     stamp = row.get("postedAt")
     try:
-        timestamp = int(datetime.fromisoformat(stamp).timestamp() * 1000) if stamp else None
+        timestamp = (
+            int(datetime.fromisoformat(stamp).timestamp() * 1000) if stamp else None
+        )
     except (ValueError, TypeError, AttributeError):
         timestamp = None
     seller_type = str(row.get("sellerType") or "").lower()
     label = (
-        "Частное лицо" if seller_type in {"private", "individual"}
-        else "Агентство" if seller_type == "agency"
-        else "Компания" if seller_type in {"company", "developer", "dealer"}
+        "Частное лицо"
+        if seller_type in {"private", "individual"}
+        else "Агентство"
+        if seller_type == "agency"
+        else "Компания"
+        if seller_type in {"company", "developer", "dealer"}
         else ""
     )
     closed = row.get("closedListings")
@@ -50,11 +58,15 @@ def _item(row: dict) -> dict | None:
         "priceDetailed": {"value": price},
         "description": str(row.get("description") or ""),
         "sellerId": row.get("sellerKey") or None,
-        "closedItemsText": f"{closed} завершённых объявлений" if isinstance(closed, int) else "",
+        "closedItemsText": f"{closed} завершённых объявлений"
+        if isinstance(closed, int)
+        else "",
         "coords": {"address_user": str(row.get("address") or "")},
         "sortTimeStamp": timestamp,
         "iva": {"SecondLineStep": [{"payload": {"value": label}}]} if label else {},
-        "photoUrls": row.get("photoUrls") if isinstance(row.get("photoUrls"), list) else [],
+        "photoUrls": row.get("photoUrls")
+        if isinstance(row.get("photoUrls"), list)
+        else [],
         "source": "apify",
     }
     return result
@@ -75,7 +87,9 @@ class ApifySource:
         url = validate_url(url)
         parsed = link_resolver.parse_link(url)
         return link_resolver.ResolvedSearch(
-            title=parsed.query.get("q") or parsed.category_slug.replace("_", " ") or "Поиск Авито",
+            title=parsed.query.get("q")
+            or parsed.category_slug.replace("_", " ")
+            or "Поиск Авито",
             profile="goods",
             catalog_url=url,
             params={"source": "apify"},
@@ -112,10 +126,14 @@ class ApifySource:
             response.raise_for_status()
             rows = response.json()
         except (httpx.HTTPError, ValueError) as exc:
-            raise RuntimeError(f"Apify не вернул объявления: {type(exc).__name__}") from exc
+            raise RuntimeError(
+                f"Apify не вернул объявления: {type(exc).__name__}"
+            ) from exc
         if not isinstance(rows, list):
             raise TypeError("Apify вернул неожиданный формат ответа")
-        items = tuple(item for row in rows if isinstance(row, dict) if (item := _item(row)))
+        items = tuple(
+            item for row in rows if isinstance(row, dict) if (item := _item(row))
+        )
         if rows and not items:
             raise RuntimeError("Apify не вернул распознаваемые объявления")
         return avito_client.Page(1, items, len(items), len(items))
