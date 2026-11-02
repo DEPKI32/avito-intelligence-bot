@@ -139,6 +139,7 @@ def test_full_lifecycle(system):
         1, URL, target_model="iPhone 15", target_memory="128 ГБ"
     )
     service.set_filter(1, search.id, "min_score", "60")
+    service.set_filter(1, search.id, "events_mode", "new_and_price")
     source.pages[(search.id, 1)] = [item(n) for n in range(1, 23)] + [
         item(23, price=1000000),
         item(24, title="iPhone 15 Pro, 128 ГБ", price=45000),
