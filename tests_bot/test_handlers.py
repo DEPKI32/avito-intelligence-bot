@@ -82,6 +82,26 @@ async def test_personal_button_uses_rotated_tunnel(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_mini_app_menu_replaces_old_personal_tunnel(monkeypatch):
+    settings = Settings(
+        webapp_url="https://avito.example.com",
+        telegram_allowed_user_ids="1,2",
+    )
+    monkeypatch.setattr(bot, "SETTINGS", settings)
+    telegram = SimpleNamespace(set_chat_menu_button=AsyncMock())
+
+    await bot.set_mini_app_menu(telegram, settings)
+
+    calls = telegram.set_chat_menu_button.await_args_list
+    assert len(calls) == 3
+    assert [call.kwargs.get("chat_id") for call in calls] == [None, 1, 2]
+    assert all(
+        call.kwargs["menu_button"].web_app.url == "https://avito.example.com"
+        for call in calls
+    )
+
+
+@pytest.mark.asyncio
 async def test_pause_resume_delete_and_filter_menu(monkeypatch):
     search = SimpleNamespace(
         id=7,

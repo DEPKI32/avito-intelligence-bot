@@ -86,6 +86,19 @@ def current_webapp_url() -> str:
     return configured
 
 
+async def set_mini_app_menu(bot: Bot, settings: Settings) -> None:
+    button = MenuButtonWebApp(
+        text="Открыть приложение",
+        web_app=WebAppInfo(url=current_webapp_url()),
+    )
+    await bot.set_chat_menu_button(menu_button=button)
+    for user_id in settings.allowed_ids:
+        try:
+            await bot.set_chat_menu_button(chat_id=user_id, menu_button=button)
+        except TelegramBadRequest:
+            LOG.warning("Не удалось обновить кнопку Mini App для чата %s", user_id)
+
+
 def menu():
     webapp_url = current_webapp_url()
     webapp = [[button("✨ Открыть приложение", "app")]] if webapp_url else []
@@ -1097,12 +1110,7 @@ async def run(service: Service, settings: Settings):
                     break
                 await asyncio.sleep(0.05)
             if web_server.started:
-                await bot.set_chat_menu_button(
-                    menu_button=MenuButtonWebApp(
-                        text="Открыть приложение",
-                        web_app=WebAppInfo(url=current_webapp_url()),
-                    )
-                )
+                await set_mini_app_menu(bot, settings)
             else:
                 raise RuntimeError("Mini App сервер не запустился")
         polling_task = asyncio.create_task(dispatcher.start_polling(bot))
