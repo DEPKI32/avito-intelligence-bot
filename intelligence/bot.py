@@ -1035,7 +1035,10 @@ async def scheduler(bot: Bot):
                 lines += [
                     f"Продавец: {html.escape(listing.seller_label or 'неизвестно')}",
                     f"Оценка: {match.score}/100 · риск: {match.risk}/100",
-                    "Причины: " + html.escape("; ".join(match.reasons or [])),
+                    "Описание: "
+                    + html.escape((listing.description or "не указано")[:280]),
+                    "Анализ: "
+                    + html.escape("; ".join((match.reasons or [])[:4])[:350]),
                     f'<a href="{html.escape(listing.url, quote=True)}">Открыть объявление</a>',
                 ]
                 if verification == "unverified":
@@ -1059,13 +1062,34 @@ async def scheduler(bot: Bot):
                     ]
                 )
                 try:
-                    await bot.send_message(
-                        search.user_id,
-                        "\n".join(lines),
-                        parse_mode="HTML",
-                        reply_markup=keyboard,
-                        disable_web_page_preview=True,
-                    )
+                    photos = image_urls(listing.raw, limit=1)
+                    caption = "\n".join(lines)
+                    if photos and len(caption) <= 1000:
+                        try:
+                            await bot.send_photo(
+                                search.user_id,
+                                photos[0],
+                                caption=caption,
+                                parse_mode="HTML",
+                                reply_markup=keyboard,
+                            )
+                        except TelegramBadRequest:
+                            LOG.info("Фото недоступно для объявления %s", listing.id)
+                            await bot.send_message(
+                                search.user_id,
+                                caption,
+                                parse_mode="HTML",
+                                reply_markup=keyboard,
+                                disable_web_page_preview=True,
+                            )
+                    else:
+                        await bot.send_message(
+                            search.user_id,
+                            caption,
+                            parse_mode="HTML",
+                            reply_markup=keyboard,
+                            disable_web_page_preview=True,
+                        )
                 except Exception:
                     LOG.exception("Telegram недоступен для уведомления %s", note.id)
                     await asyncio.to_thread(SERVICE.mark_sent, note.id, False)

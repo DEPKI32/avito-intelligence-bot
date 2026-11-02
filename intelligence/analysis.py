@@ -20,6 +20,14 @@ _BAD = [
         r"icloud\s+lock|activation\s+lock|заблокирован|блокировка\s+оператора|\bmdm\b",
         "упомянута блокировка",
     ),
+    (
+        r"\b(?:реплик[а-я]*|копи[яюией]|неоригинал[а-я]*|подделк[а-я]*|1\s*:\s*1)\b",
+        "указана копия или реплика",
+    ),
+    (
+        r"\b(?:аккаунт\s+не\s+отвязан|не\s+отвязан\s+от\s+аккаунта)\b",
+        "аккаунт не отвязан",
+    ),
 ]
 _SHOP = [
     r"наш\s+магазин",
@@ -33,6 +41,7 @@ _MEMORY = re.compile(r"\b(\d{2,4})\s*(гб|gb|тб|tb)\b", re.IGNORECASE)
 _IPHONE = re.compile(
     r"\biphone\s*(\d{1,2})(?:\s*(pro\s*max|pro|plus|mini))?\b", re.IGNORECASE
 )
+_AIRPODS_MAX = re.compile(r"\bair\s*pods\s+max(?:\s+(2))?\b", re.IGNORECASE)
 _COMPACT_MEMORY = re.compile(r"\b(\d{1,2})\s*/\s*(\d{2,4})\b")
 _SCREEN_SIZE = re.compile(
     r"\b\d{1,2}(?:[.,]\d)?\s*(?:дюйм(?:а|ов)?|inch(?:es)?)\b", re.IGNORECASE
@@ -51,6 +60,9 @@ def model_key(text: str) -> str:
             + match[1]
             + (" " + re.sub(r"\s+", " ", match[2].lower()) if match[2] else "")
         )
+    airpods = _AIRPODS_MAX.search(text)
+    if airpods:
+        return "airpods max" + (" 2" if airpods[1] else "")
     core = text.split(",")[0]
     core = _COMPACT_MEMORY.sub(" ", core)
     core = _SCREEN_SIZE.sub(" ", core)
@@ -93,7 +105,7 @@ def condition_key(text: str) -> str:
     value = text.lower()
     if re.search(r"\b(?:б/у|бу|использовался|пользовались|не новый)\b", value):
         return "used"
-    if re.search(r"\b(?:новый|новая|новое|запечатан|не распакован)\b", value):
+    if re.search(r"\b(?:новый|новая|новое|новых|запечатан|не распакован)\b", value):
         return "new"
     return "unknown"
 
@@ -114,6 +126,39 @@ def defects(text: str) -> list[str]:
     return [
         reason for pattern, reason in _BAD if re.search(pattern, clean, re.IGNORECASE)
     ]
+
+
+def description_signals(text: str) -> tuple[list[str], int]:
+    """Extract disclosed condition facts; never treat seller claims as verification."""
+    lower = text.casefold()
+    reasons: list[str] = []
+    risk = 0
+    # Explicit absence is not damage evidence.
+    if re.search(r"\b(?:пот[её]рт|царапин|скол|трещин|коцк)", lower) and not re.search(
+        r"(?:без|нет)\s+(?:никаких\s+)?(?:царапин|сколов|трещин|коцок)", lower
+    ):
+        reasons.append("В описании упомянуты следы использования — уточните состояние")
+        risk += 12
+    if re.search(
+        r"\b(?:после\s+ремонта|менял[иа]?\s+(?:экран|аккумулятор|батарею)|восстановленн)",
+        lower,
+    ):
+        reasons.append("Упомянут ремонт или восстановление — проверьте детали")
+        risk += 20
+    if re.search(r"\b(?:чек\s+(?:есть|имеется)|с\s+чеком)\b", lower):
+        reasons.append("Продавец заявляет о наличии чека")
+    if re.search(r"\b(?:на\s+гарантии|гарантия\s+до|есть\s+гарантия)\b", lower):
+        reasons.append("Продавец заявляет о гарантии — проверьте срок")
+    if re.search(r"\b(?:нет\s+чека|без\s+чека)\b", lower):
+        reasons.append("Нет чека — проверьте происхождение")
+        risk += 8
+    if re.search(r"\b(?:нет\s+коробки|без\s+коробки)\b", lower):
+        reasons.append("Нет коробки — уточните комплект")
+        risk += 4
+    if len(text.strip()) < 40:
+        reasons.append("Описание короткое — запросите состояние и комплект")
+        risk += 8
+    return reasons, risk
 
 
 @dataclass(frozen=True)
@@ -206,7 +251,9 @@ class Assessment:
 
 def assess(listing: Listing, search: Search, market: Market | None) -> Assessment:
     reasons: list[str] = []
-    bad = defects(listing.title + " " + listing.description)
+    listing_text = listing.title + " " + listing.description
+    bad = defects(listing_text)
+    condition_reasons, condition_risk = description_signals(listing_text)
     seller = seller_type(
         listing.seller_label, listing.description, listing.closed_listings
     )
@@ -241,6 +288,16 @@ def assess(listing: Listing, search: Search, market: Market | None) -> Assessmen
     if bad:
         risk += 65
         reasons.extend(bad)
+    risk += condition_risk
+    reasons.extend(condition_reasons)
+    condition = condition_key(listing_text)
+    reasons.append(
+        "Состояние: новое (со слов продавца)"
+        if condition == "new"
+        else "Состояние: б/у (со слов продавца)"
+        if condition == "used"
+        else "Состояние не указано — уточните у продавца"
+    )
     if seller.reasons:
         reasons.extend(seller.reasons)
     discount = None

@@ -63,7 +63,7 @@ class Search(Base):
     notification_mode: Mapped[str] = mapped_column(String(30), default="below_market")
     discount_percent: Mapped[int] = mapped_column(Integer, default=15)
     max_alert_price: Mapped[int | None] = mapped_column(Integer)
-    min_score: Mapped[int] = mapped_column(Integer, default=70)
+    min_score: Mapped[int] = mapped_column(Integer, default=55)
     events_mode: Mapped[str] = mapped_column(String(30), default="new_and_price")
     interval_seconds: Mapped[int] = mapped_column(Integer, default=900)
     status: Mapped[str] = mapped_column(String(30), default="creating")

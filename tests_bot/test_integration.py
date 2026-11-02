@@ -303,9 +303,22 @@ def test_watch_multiple_pages_and_reappearance(system):
 
 def test_analysis_and_input_validation():
     assert model_key("iPhone 15, 128 ГБ") != model_key("iPhone 15 Pro, 128 ГБ")
+    assert model_key("Apple AirPods Max Blue") == model_key("AirPods Max 2024 Purple")
+    assert model_key("AirPods Max 2 USB-C") != model_key("AirPods Max Blue")
     assert condition_key("iPhone 15 новый") != condition_key("iPhone 15 б/у")
     assert defects("Никаких проблем с Face ID нет") == []
     assert defects("Face ID не работает")
+    from intelligence.analysis import description_signals
+
+    assert (
+        "Продавец заявляет о наличии чека"
+        in description_signals(
+            "Продаю свои наушники, с чеком, на гарантии, состояние хорошее."
+        )[0]
+    )
+    assert description_signals("После ремонта, есть царапины")[1] >= 20
+    assert description_signals("Без царапин, полностью исправен")[1] < 12
+    assert defects("Продаю копию AirPods Max")
     assert seller_type("Магазин", "Наш магазин, работаем ежедневно", 150).kind == "shop"
     assert seller_type("", "", None).kind == "unknown"
     assert (
