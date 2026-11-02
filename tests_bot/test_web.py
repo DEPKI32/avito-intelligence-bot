@@ -95,6 +95,29 @@ def test_public_telegram_users_have_private_searches(tmp_path):
     assert len(client.get("/api/dashboard").json()["searches"]) == 1
 
 
+def test_mini_app_accepts_mobile_avito_search_link(tmp_path):
+    settings = Settings(
+        telegram_bot_token="123:TEST",
+        telegram_allowed_user_ids="1",
+        database_url=f"sqlite:///{tmp_path / 'mobile.sqlite'}",
+    )
+    service = Service(session_factory(settings.database_url), Source(), settings)
+    client = TestClient(create_app(service, settings))
+    header = {"X-Telegram-Init-Data": signed(settings, auth_date=int(time.time()))}
+    result = client.post(
+        "/api/searches",
+        headers=header,
+        json={
+            "url": "https://m.avito.ru/all/audio_i_video?q=airpods+max&s=104",
+            "title": "AirPods Max",
+        },
+    )
+    assert result.status_code == 201
+    assert result.json()["url"] == (
+        "https://www.avito.ru/all/audio_i_video?q=airpods+max&s=104"
+    )
+
+
 def test_web_api_uses_same_service_and_enforces_ownership(tmp_path):
     settings = Settings(
         telegram_bot_token="123:TEST",

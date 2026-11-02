@@ -68,6 +68,23 @@ def test_avito_url_with_cyrillic_query_is_encoded_before_request():
     )
     assert link_resolver.parse_link(url).query["q"] == "диван"
     assert validate_url(url) == url
+
+
+def test_mobile_avito_search_url_keeps_filters_and_uses_desktop_host():
+    mobile = (
+        "https://m.avito.ru/all/audio_i_video?"
+        "context=H4sIAAAAAAAA_wF8&f=ASgBAgECAUSk_heyuZsD&"
+        "moreExpensive=0&presentationType=serp&"
+        "q=airpods%20max%202026%20%D0%BE%D1%80%D0%B8%D0%B3%D0%B8%D0%BD%D0%B0%D0%BB&"
+        "radius=0&s=104"
+    )
+    normalized = validate_url(mobile)
+    assert normalized.startswith("https://www.avito.ru/all/audio_i_video?")
+    assert (
+        link_resolver.parse_link(normalized).query["q"] == "airpods max 2026 оригинал"
+    )
+    assert "f=ASgBAgECAUSk_heyuZsD" in normalized
+    assert "s=104" in normalized
     assert not memory_matches("MacBook Air M3 8/256", "512 ГБ")
     first = Listing(title="MacBook Air M3 16/512", description="")
     second = Listing(title="MacBook Air M3, 16 ГБ 512 ГБ", description="")
@@ -299,6 +316,7 @@ def test_analysis_and_input_validation():
         "http://www.avito.ru/moskva",
         "https://evilavito.ru/moskva",
         "https://www.avito.ru.evil.com/moskva",
+        "https://m.avito.ru.evil.com/moskva",
     ]:
         with pytest.raises(ValueError):
             validate_url(url)

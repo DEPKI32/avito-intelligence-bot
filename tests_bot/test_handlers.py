@@ -40,6 +40,17 @@ async def test_start_and_invalid_link():
 
 
 @pytest.mark.asyncio
+async def test_chat_accepts_mobile_avito_search_link():
+    state = SimpleNamespace(set_state=AsyncMock(), update_data=AsyncMock())
+    message = fake_message("https://m.avito.ru/all/audio_i_video?q=airpods+max&s=104")
+    await bot.receive_url(message, state)
+    assert state.update_data.await_args.kwargs["url"] == (
+        "https://www.avito.ru/all/audio_i_video?q=airpods+max&s=104"
+    )
+    state.set_state.assert_awaited_once_with(bot.NewSearch.model)
+
+
+@pytest.mark.asyncio
 async def test_personal_mini_app_button(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
