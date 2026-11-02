@@ -49,6 +49,17 @@ docker compose logs -f bot
 3. Запустите `docker compose -f compose.prod.yml up -d --build`. Проверьте `docker compose -f compose.prod.yml ps`, `docker compose -f compose.prod.yml logs --tail=100 bot caddy` и `https://имя-домена/healthz`.
 4. После успешной проверки остановите старый локальный бот и `scripts.quick_tunnel`: одновременно запущенные копии одного Telegram-бота конфликтуют при опросе обновлений и могут снова заменить кнопку Mini App временной ссылкой.
 
+Если на VPS уже работают сайты под Nginx на портах 80/443, используйте отдельный
+виртуальный хост из [`deploy/nginx.conf.template`](deploy/nginx.conf.template)
+вместо Caddy. Подставьте HTTPS-домен вместо `__APP_DOMAIN__`, направьте его на
+`127.0.0.1:8080` и выпустите сертификат через Certbot. Приложение можно
+запускать как службу [`deploy/avito-bot.service`](deploy/avito-bot.service):
+она предполагает код в `/opt/avito-intelligence`, Python-окружение `.venv`,
+пользователя `avito` и его права записи в `data/` и `output/`. В `.env` задайте
+`WEBAPP_URL=https://ваш-домен`, `WEBAPP_HOST=127.0.0.1` и `PUBLIC_ACCESS=true`.
+Сначала остановите прежний экземпляр бота, затем перенесите SQLite-базу и
+запустите службу. Проверяйте `systemctl status avito-bot` и `/healthz`.
+
 `PUBLIC_ACCESS=true` разрешает любому пользователю Telegram общаться с ботом и открывать Mini App после проверки подписи Telegram. Поиски и настройки принадлежат ID создавшего их пользователя; чужие данные через API недоступны. `TELEGRAM_ALLOWED_USER_IDS` всё равно нужен для владельца прежних поисков при импорте. Без `PUBLIC_ACCESS=true` сохраняется прежний режим только для перечисленных ID. Для реальной доступности 24/7 также нужны питание, сеть и работающий хостинг; `restart: unless-stopped` автоматически запускает контейнер после перезагрузки сервера.
 
 ## Что происходит после добавления
