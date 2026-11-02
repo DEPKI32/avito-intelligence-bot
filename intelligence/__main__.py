@@ -28,7 +28,13 @@ def main():
     imported = import_legacy(sessions, min(settings.allowed_ids))
     if imported:
         logging.getLogger(__name__).info("Импортировано прежних поисков: %s", imported)
-    asyncio.run(run(Service(sessions, AvitoSource(settings), settings), settings))
+    if settings.source_provider == "apify":
+        from .apify_source import ApifySource
+
+        source = ApifySource(settings)
+    else:
+        source = AvitoSource(settings)
+    asyncio.run(run(Service(sessions, source, settings), settings))
 
 
 if __name__ == "__main__":

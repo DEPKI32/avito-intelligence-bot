@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     request_delay_seconds: int = Field(default=30, ge=10, le=300)
     scan_page_limit: int = Field(default=30, ge=1, le=30)
     watch_pages: int = Field(default=1, ge=1, le=5)
+    source_provider: str = "avito"
+    apify_token: str = ""
+    apify_max_charge_usd: float = Field(default=0.25, ge=0.01, le=5)
     timezone: str = "Europe/Moscow"
     log_level: str = "INFO"
     ai_enabled: bool = False
@@ -57,6 +60,10 @@ class Settings(BaseSettings):
             raise ValueError("Укажите TELEGRAM_BOT_TOKEN в .env")
         if not self.allowed_ids:
             raise ValueError("Укажите TELEGRAM_ALLOWED_USER_IDS в .env")
+        if self.source_provider not in {"avito", "apify"}:
+            raise ValueError("SOURCE_PROVIDER должен быть avito или apify")
+        if self.source_provider == "apify" and not self.apify_token:
+            raise ValueError("Для SOURCE_PROVIDER=apify укажите APIFY_TOKEN")
         if self.ai_enabled and not (
             self.ai_api_key and self.ai_base_url and self.ai_model
         ):
