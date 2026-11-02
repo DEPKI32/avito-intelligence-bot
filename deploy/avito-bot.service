@@ -1,0 +1,21 @@
+[Unit]
+Description=Avito Intelligence Telegram bot and Mini App
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=avito
+Group=avito
+WorkingDirectory=/opt/avito-intelligence
+ExecStart=/opt/avito-intelligence/.venv/bin/python -m intelligence
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/opt/avito-intelligence/data /opt/avito-intelligence/output
+
+[Install]
+WantedBy=multi-user.target

@@ -14,11 +14,16 @@ class Settings(BaseSettings):
 
     telegram_bot_token: str = ""
     telegram_allowed_user_ids: str = ""
+    public_access: bool = False
     database_url: str = "sqlite:///data/intelligence.sqlite3"
     check_interval_seconds: int = Field(default=900, ge=300, le=86400)
     request_delay_seconds: int = Field(default=30, ge=10, le=300)
     scan_page_limit: int = Field(default=30, ge=1, le=30)
     watch_pages: int = Field(default=1, ge=1, le=5)
+    source_provider: str = "avito"
+    apify_token: str = ""
+    apify_max_charge_usd: float = Field(default=0.25, ge=0.01, le=5)
+    apify_daily_run_limit: int = Field(default=4, ge=1, le=1000)
     timezone: str = "Europe/Moscow"
     log_level: str = "INFO"
     ai_enabled: bool = False
@@ -48,11 +53,18 @@ class Settings(BaseSettings):
             if x.strip()
         }
 
+    def user_allowed(self, user_id: int) -> bool:
+        return self.public_access or user_id in self.allowed_ids
+
     def validate_runtime(self) -> None:
         if not self.telegram_bot_token:
             raise ValueError("Укажите TELEGRAM_BOT_TOKEN в .env")
         if not self.allowed_ids:
             raise ValueError("Укажите TELEGRAM_ALLOWED_USER_IDS в .env")
+        if self.source_provider not in {"avito", "apify", "apify_dami"}:
+            raise ValueError("SOURCE_PROVIDER должен быть avito, apify или apify_dami")
+        if self.source_provider.startswith("apify") and not self.apify_token:
+            raise ValueError("Для источника Apify укажите APIFY_TOKEN")
         if self.ai_enabled and not (
             self.ai_api_key and self.ai_base_url and self.ai_model
         ):

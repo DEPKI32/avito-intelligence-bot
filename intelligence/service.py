@@ -86,7 +86,7 @@ def validate_url(url: str) -> str:
     parts = urlsplit(url.strip())
     if (
         parts.scheme != "https"
-        or parts.hostname not in {"avito.ru", "www.avito.ru"}
+        or parts.hostname not in {"avito.ru", "www.avito.ru", "m.avito.ru"}
         or parts.username
         or parts.password
         or parts.port
@@ -95,7 +95,7 @@ def validate_url(url: str) -> str:
     normalized = urlunsplit(
         (
             "https",
-            parts.hostname,
+            "www.avito.ru" if parts.hostname == "m.avito.ru" else parts.hostname,
             quote(parts.path, safe="/%:@"),
             quote(parts.query, safe="=&+;%:@/?,"),
             "",
@@ -525,7 +525,11 @@ class Service:
                     watch_done = page.is_last or number >= self.settings.watch_pages
                     search.watch_page = 1 if watch_done else number + 1
                     next_soon = not watch_done
-                    if page.is_last and search.watch_started:
+                    if (
+                        page.is_last
+                        and search.watch_started
+                        and not getattr(self.source, "incremental_results", False)
+                    ):
                         for old in db.scalars(
                             select(Match).where(
                                 Match.search_id == search_id,

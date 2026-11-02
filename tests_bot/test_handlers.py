@@ -40,6 +40,17 @@ async def test_start_and_invalid_link():
 
 
 @pytest.mark.asyncio
+async def test_chat_accepts_mobile_avito_search_link():
+    state = SimpleNamespace(set_state=AsyncMock(), update_data=AsyncMock())
+    message = fake_message("https://m.avito.ru/all/audio_i_video?q=airpods+max&s=104")
+    await bot.receive_url(message, state)
+    assert state.update_data.await_args.kwargs["url"] == (
+        "https://www.avito.ru/all/audio_i_video?q=airpods+max&s=104"
+    )
+    state.set_state.assert_awaited_once_with(bot.NewSearch.model)
+
+
+@pytest.mark.asyncio
 async def test_personal_mini_app_button(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
@@ -78,6 +89,26 @@ async def test_personal_button_uses_rotated_tunnel(monkeypatch, tmp_path):
     keyboard = message.answer.await_args.kwargs["reply_markup"]
     assert keyboard.inline_keyboard[0][0].web_app.url.startswith(
         "https://fresh.lhr.life?ticket="
+    )
+
+
+@pytest.mark.asyncio
+async def test_mini_app_menu_replaces_old_personal_tunnel(monkeypatch):
+    settings = Settings(
+        webapp_url="https://avito.example.com",
+        telegram_allowed_user_ids="1,2",
+    )
+    monkeypatch.setattr(bot, "SETTINGS", settings)
+    telegram = SimpleNamespace(set_chat_menu_button=AsyncMock())
+
+    await bot.set_mini_app_menu(telegram, settings)
+
+    calls = telegram.set_chat_menu_button.await_args_list
+    assert len(calls) == 3
+    assert [call.kwargs.get("chat_id") for call in calls] == [None, 1, 2]
+    assert all(
+        call.kwargs["menu_button"].web_app.url == "https://avito.example.com"
+        for call in calls
     )
 
 
@@ -141,6 +172,16 @@ async def test_access_rejects_unknown_user():
     result = await bot.Access()(handler, event, {})
     assert result is None
     handler.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_public_access_accepts_other_telegram_users(monkeypatch):
+    monkeypatch.setattr(bot, "SETTINGS", Settings(public_access=True))
+    handler = AsyncMock(return_value="ok")
+    event = fake_message("/start")
+    event.from_user.id = 99
+    assert await bot.Access()(handler, event, {}) == "ok"
+    handler.assert_awaited_once()
 
 
 @pytest.mark.asyncio

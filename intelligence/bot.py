@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
+import httpx
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
@@ -27,7 +28,7 @@ from .config import Settings
 from .export import export_search
 from .service import Service, validate_url
 from .text_ai import analyze_text
-from .vision import image_urls, inspect_images
+from .vision import download_image, image_urls, inspect_images
 
 LOG = logging.getLogger(__name__)
 router = Router()
@@ -38,7 +39,7 @@ SETTINGS: Settings
 class Access(BaseMiddleware):
     async def __call__(self, handler, event, data):
         user = getattr(event, "from_user", None)
-        if user is None or user.id not in SETTINGS.allowed_ids:
+        if user is None or not SETTINGS.user_allowed(user.id):
             if isinstance(event, CallbackQuery):
                 await event.answer("Нет доступа", show_alert=True)
             return None
@@ -84,6 +85,19 @@ def current_webapp_url() -> str:
     ):
         return active
     return configured
+
+
+async def set_mini_app_menu(bot: Bot, settings: Settings) -> None:
+    button = MenuButtonWebApp(
+        text="Открыть приложение",
+        web_app=WebAppInfo(url=current_webapp_url()),
+    )
+    await bot.set_chat_menu_button(menu_button=button)
+    for user_id in settings.allowed_ids:
+        try:
+            await bot.set_chat_menu_button(chat_id=user_id, menu_button=button)
+        except TelegramBadRequest:
+            LOG.warning("Не удалось обновить кнопку Mini App для чата %s", user_id)
 
 
 def menu():
@@ -1022,7 +1036,10 @@ async def scheduler(bot: Bot):
                 lines += [
                     f"Продавец: {html.escape(listing.seller_label or 'неизвестно')}",
                     f"Оценка: {match.score}/100 · риск: {match.risk}/100",
-                    "Причины: " + html.escape("; ".join(match.reasons or [])),
+                    "Из описания: "
+                    + html.escape((listing.description or "не указано")[:280]),
+                    "Анализ: "
+                    + html.escape("; ".join((match.reasons or [])[:4])[:350]),
                     f'<a href="{html.escape(listing.url, quote=True)}">Открыть объявление</a>',
                 ]
                 if verification == "unverified":
@@ -1046,13 +1063,40 @@ async def scheduler(bot: Bot):
                     ]
                 )
                 try:
-                    await bot.send_message(
-                        search.user_id,
-                        "\n".join(lines),
-                        parse_mode="HTML",
-                        reply_markup=keyboard,
-                        disable_web_page_preview=True,
-                    )
+                    photos = image_urls(listing.raw, limit=1)
+                    caption = "\n".join(lines)
+                    if photos and len(caption) <= 1000:
+                        try:
+                            photo_data = await download_image(photos[0])
+                            await bot.send_photo(
+                                search.user_id,
+                                BufferedInputFile(photo_data, filename="avito.jpg"),
+                                caption=caption,
+                                parse_mode="HTML",
+                                reply_markup=keyboard,
+                            )
+                        except (
+                            TelegramBadRequest,
+                            httpx.HTTPError,
+                            OSError,
+                            ValueError,
+                        ):
+                            LOG.info("Фото недоступно для объявления %s", listing.id)
+                            await bot.send_message(
+                                search.user_id,
+                                caption,
+                                parse_mode="HTML",
+                                reply_markup=keyboard,
+                                disable_web_page_preview=True,
+                            )
+                    else:
+                        await bot.send_message(
+                            search.user_id,
+                            caption,
+                            parse_mode="HTML",
+                            reply_markup=keyboard,
+                            disable_web_page_preview=True,
+                        )
                 except Exception:
                     LOG.exception("Telegram недоступен для уведомления %s", note.id)
                     await asyncio.to_thread(SERVICE.mark_sent, note.id, False)
@@ -1076,6 +1120,7 @@ async def run(service: Service, settings: Settings):
     task = asyncio.create_task(scheduler(bot))
     web_server = None
     web_task = None
+    polling_task = None
     try:
         if settings.webapp_url:
             import uvicorn
@@ -1096,20 +1141,26 @@ async def run(service: Service, settings: Settings):
                     break
                 await asyncio.sleep(0.05)
             if web_server.started:
-                await bot.set_chat_menu_button(
-                    menu_button=MenuButtonWebApp(
-                        text="Открыть приложение",
-                        web_app=WebAppInfo(url=current_webapp_url()),
-                    )
-                )
+                await set_mini_app_menu(bot, settings)
             else:
-                LOG.error("Mini App сервер не запустился; чат-бот продолжает работу")
-        await dispatcher.start_polling(bot)
+                raise RuntimeError("Mini App сервер не запустился")
+        polling_task = asyncio.create_task(dispatcher.start_polling(bot))
+        if web_task:
+            done, _ = await asyncio.wait(
+                {polling_task, web_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if web_task in done:
+                await web_task
+                raise RuntimeError("Mini App сервер остановился")
+        await polling_task
     finally:
         if hasattr(service.source, "stop"):
             service.source.stop()
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+        if polling_task:
+            polling_task.cancel()
+            await asyncio.gather(polling_task, return_exceptions=True)
         if web_server:
             web_server.should_exit = True
         if web_task:
