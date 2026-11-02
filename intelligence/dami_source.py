@@ -70,7 +70,11 @@ class DamiSource(ApifySource):
             raise RuntimeError(f"Источник Авито не ответил: {', '.join(failures[:3])}")
         items = []
         for row in rows:
-            if not isinstance(row, dict) or row.get("_sample") or row.get("_diagnostic"):
+            if (
+                not isinstance(row, dict)
+                or row.get("_sample")
+                or row.get("_diagnostic")
+            ):
                 continue
             adapted = dict(row)
             adapted["id"] = row.get("listingId")
@@ -81,9 +85,12 @@ class DamiSource(ApifySource):
             item = _item(adapted)
             if item:
                 items.append(item)
-        if rows and not items and not all(
-            isinstance(row, dict) and row.get("_diagnostic")
-            for row in rows
+        if (
+            rows
+            and not items
+            and not all(
+                isinstance(row, dict) and row.get("_diagnostic") for row in rows
+            )
         ):
             raise RuntimeError("Apify не вернул распознаваемые объявления")
         return avito_client.Page(1, tuple(items), len(items), len(items))

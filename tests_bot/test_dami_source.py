@@ -39,7 +39,9 @@ def test_dami_excludes_known_ids_and_accepts_empty_check(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(httpx, "post", fake_post)
-    search = service.create_search(1, "https://www.avito.ru/moskva/audio_i_video?q=airpods")
+    search = service.create_search(
+        1, "https://www.avito.ru/moskva/audio_i_video?q=airpods"
+    )
     assert service.scan_one(search.id)["complete"] is True
     assert service.scan_one(search.id)["new"] == 0
     assert requests[0][2]["excludeListingIds"] == []
@@ -69,5 +71,7 @@ def test_dami_blocked_response_does_not_clear_monitor(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(httpx, "post", fake_post)
-    search = service.create_search(1, "https://www.avito.ru/moskva/audio_i_video?q=airpods")
+    search = service.create_search(
+        1, "https://www.avito.ru/moskva/audio_i_video?q=airpods"
+    )
     assert "NOT_SERVED" in service.scan_one(search.id)["error"]
