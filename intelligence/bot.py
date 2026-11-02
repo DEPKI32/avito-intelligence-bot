@@ -1036,7 +1036,7 @@ async def scheduler(bot: Bot):
                 lines += [
                     f"Продавец: {html.escape(listing.seller_label or 'неизвестно')}",
                     f"Оценка: {match.score}/100 · риск: {match.risk}/100",
-                    "Описание: "
+                    "Из описания: "
                     + html.escape((listing.description or "не указано")[:280]),
                     "Анализ: "
                     + html.escape("; ".join((match.reasons or [])[:4])[:350]),

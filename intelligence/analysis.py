@@ -253,7 +253,7 @@ def assess(listing: Listing, search: Search, market: Market | None) -> Assessmen
     reasons: list[str] = []
     listing_text = listing.title + " " + listing.description
     bad = defects(listing_text)
-    condition_reasons, condition_risk = description_signals(listing_text)
+    condition_reasons, condition_risk = description_signals(listing.description)
     seller = seller_type(
         listing.seller_label, listing.description, listing.closed_listings
     )
